@@ -1,0 +1,114 @@
+{
+  "projectType": "saas",
+  "projectName": "Apartado de Salas",
+  "projectDescription": "Sistema web para la gestión y apartado de salas institucionales con arquitectura MVC y control de acceso por roles.",
+  "theme": "almond",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#1E40AF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/reservations",
+              "features/materials",
+              "features/room-management"
+            ]
+          },
+          {
+            "group": "User Guides",
+            "pages": [
+              "guides/user-role",
+              "guides/admin-role",
+              "guides/creating-reservations",
+              "guides/managing-requests"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/mvc-pattern",
+              "architecture/routing",
+              "architecture/database"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Controllers",
+            "pages": [
+              "api/auth-controller",
+              "api/reservation-controller",
+              "api/material-controller",
+              "api/dashboard-controller"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "api/reservation-model",
+              "api/reservation-slot-model",
+              "api/material-model",
+              "api/room-model",
+              "api/user-model"
+            ]
+          },
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/router",
+              "api/database",
+              "api/auth-helper",
+              "api/session-helper"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Role-based access control (admin and user roles)",
+    "Room reservation system with multi-slot time booking",
+    "Reservation approval workflow (pending/approved/rejected)",
+    "Material assignment to reservations",
+    "Custom MVC architecture with PHP router",
+    "Session-based authentication",
+    "Conflict detection for overlapping reservations",
+    "Dashboard views tailored by user role"
+  ],
+  "publicApiSurface": [
+    "Router::add(method, path, controller, action)",
+    "Router::dispatch()",
+    "Database::getConnection()",
+    "Auth::check()",
+    "Auth::requireLogin()",
+    "Auth::requireRole(role)",
+    "Session::start()",
+    "Session::isActive()",
+    "Session::setFlash(type, message)",
+    "Reservation::create(userId, roomId, eventName, notes)",
+    "Reservation::findById(id)",
+    "Reservation::updateStatus(reservationId, status)",
+    "Reservation::attachMaterials(reservationId, materialIds)",
+    "ReservationSlot::create(reservationId, date, startTime, endTime)",
+    "ReservationSlot::hasConflict(roomId, date, startTime, endTime)",
+    "Material::validateForRoom(materialIds, roomId)"
+  ]
+}
