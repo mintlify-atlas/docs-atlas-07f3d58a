@@ -1,0 +1,468 @@
+---
+title: 'Creating Room Reservations'
+description: 'Step-by-step guide for creating and submitting room reservation requests'
+---
+
+## Overview
+
+This guide walks you through the complete process of creating a room reservation in Apartado de Salas, from accessing the form to successfully submitting your request.
+
+## Prerequisites
+
+Before creating a reservation, ensure you have:
+
+- An active user account
+- Valid login credentials
+- Basic information about your event (name, date, time)
+- Knowledge of which room and materials you need
+
+<Note>
+All users must be authenticated to create reservations. The system enforces this via `Auth::requireLogin()` in `app/controllers/ReservationController.php:17`.
+</Note>
+
+## Step 1: Access the Reservation Form
+
+<Steps>
+  <Step title="Login to System">
+    Navigate to the login page and authenticate with your credentials.
+  </Step>
+  
+  <Step title="Navigate to Dashboard">
+    After successful login, you'll be redirected to your dashboard.
+  </Step>
+  
+  <Step title="Click Reserve Room">
+    Find and click the "Apartar sala" (Reserve Room) option. This navigates to `/reservations/create`.
+  </Step>
+</Steps>
+
+The create form is loaded from `app/views/reservations/create.php` and includes:
+
+- Room selection dropdown
+- Event information fields
+- Dynamic time slot management
+- Material selection checkboxes
+
+## Step 2: Select Your Room
+
+The first step is choosing which room you want to reserve:
+
+<Steps>
+  <Step title="View Available Rooms">
+    The room dropdown is populated with all active rooms from the database:
+    
+    ```php
+    $roomModel = new Room();
+    $rooms = $roomModel->getAll();
+    ```
+  </Step>
+  
+  <Step title="Choose a Room">
+    Select the room that best fits your event needs. Each room has different capacities and available materials.
+  </Step>
+  
+  <Step title="Wait for Materials">
+    After selecting a room, the system automatically loads available materials via AJAX.
+  </Step>
+</Steps>
+
+### Dynamic Material Loading
+
+When you select a room, JavaScript triggers an API call:
+
+```javascript
+roomSelect.addEventListener('change', async function () {
+    const roomId = this.value;
+
+    if (!roomId) {
+        materialsDiv.innerHTML = '<p><em>Seleccione una sala...</em></p>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${BASE_URL}/api/materials?room_id=${roomId}`);
+        const materials = await response.json();
+        
+        // Display materials as checkboxes
+    } catch (error) {
+        materialsDiv.innerHTML = '<p>Error al cargar materiales.</p>';
+    }
+});
+```
+
+<Info>
+The materials are room-specific. Each room only shows materials that have been configured for it in the database.
+</Info>
+
+## Step 3: Enter Event Details
+
+Provide information about your event:
+
+### Required Fields
+
+<ParamField path="event_name" type="string" required>
+  The name of your event. This will be visible to administrators when reviewing your request.
+  
+  **Example**: "Marketing Team Quarterly Meeting", "Student Workshop", "Board Presentation"
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="notes" type="text">
+  Additional observations or special requirements. Use this to communicate:
+  - Special setup needs
+  - Expected number of attendees
+  - Technical requirements
+  - Contact information for event day
+  
+  **Example**: "Please arrange chairs in U-shape configuration. Expecting 25 attendees."
+</ParamField>
+
+<Tip>
+Providing detailed notes helps administrators understand your needs and increases the likelihood of approval.
+</Tip>
+
+## Step 4: Add Time Slots
+
+Every reservation requires at least one time slot:
+
+<Steps>
+  <Step title="Fill First Time Slot">
+    The form includes one time slot by default. Fill in:
+    - **Date**: When you need the room
+    - **Start Time**: When your event begins
+    - **End Time**: When your event ends
+  </Step>
+  
+  <Step title="Add More Slots (Optional)">
+    If your event spans multiple days or has multiple sessions, click "Agregar otro horario" to add additional time slots.
+    
+    Each click adds a new set of date/time fields:
+    
+    ```javascript
+    function addSlot() {
+        const slots = document.getElementById('slots');
+        const div = document.createElement('div');
+        div.className = 'slot';
+        
+        div.innerHTML = `
+            <label>Fecha</label>
+            <input type="date" name="dates[]" required>
+            
+            <label>Hora inicio</label>
+            <input type="time" name="start_times[]" required>
+            
+            <label>Hora fin</label>
+            <input type="time" name="end_times[]" required>
+        `;
+        
+        slots.appendChild(div);
+    }
+    ```
+  </Step>
+  
+  <Step title="Verify Time Ranges">
+    Ensure end times are after start times and that you're requesting reasonable time blocks.
+  </Step>
+</Steps>
+
+### Time Slot Validation
+
+When you submit, the system validates each time slot:
+
+```php
+foreach ($dates as $index => $date) {
+    $start = $startTimes[$index] ?? null;
+    $end   = $endTimes[$index] ?? null;
+
+    if (!$date || !$start || !$end) {
+        throw new Exception('Bloque horario incompleto.');
+    }
+
+    if ($slotModel->hasConflict((int)$roomId, $date, $start, $end)) {
+        throw new Exception("Conflicto de horario el $date de $start a $end.");
+    }
+
+    $slotModel->create($reservationId, $date, $start, $end);
+}
+```
+
+<Warning>
+If any of your requested time slots conflict with existing approved reservations, your entire submission will be rejected with a specific error message.
+</Warning>
+
+## Step 5: Select Materials
+
+Choose the materials you need for your event:
+
+<Steps>
+  <Step title="Review Available Materials">
+    After selecting a room, checkboxes appear for all materials configured for that room.
+  </Step>
+  
+  <Step title="Check Required Materials">
+    Select only the materials you actually need. Common materials include:
+    - Projectors
+    - Microphones
+    - Whiteboards
+    - Audio equipment
+    - Video conferencing tools
+  </Step>
+  
+  <Step title="Validation">
+    The system validates that your selected materials are valid for the chosen room:
+    
+    ```php
+    if (!$materialModel->validateForRoom($materials, (int)$roomId)) {
+        throw new Exception('Seleccionaste materiales no válidos para la sala.');
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+If no materials are available for a room, you'll see: "No hay materiales disponibles para esta sala." You can still proceed with the reservation.
+</Note>
+
+## Step 6: Review and Submit
+
+Before submitting, review all information:
+
+<Steps>
+  <Step title="Double-Check Details">
+    Verify:
+    - ✓ Correct room selected
+    - ✓ Event name is descriptive
+    - ✓ All time slots are accurate
+    - ✓ Start/end times are correct
+    - ✓ Appropriate materials selected
+    - ✓ Notes contain relevant information
+  </Step>
+  
+  <Step title="Click Submit">
+    Click "Enviar solicitud" (Submit Request) to send your reservation.
+  </Step>
+  
+  <Step title="Wait for Processing">
+    The form submits via POST to `/reservations/store`. The server processes your request in a transaction.
+  </Step>
+</Steps>
+
+## Submission Process
+
+Here's what happens when you submit:
+
+### 1. Initial Validation
+
+```php
+$userId   = $_SESSION['user']['id'] ?? null;
+$roomId   = $_POST['room_id'] ?? null;
+$event    = trim($_POST['event_name'] ?? '');
+$notes    = trim($_POST['notes'] ?? '');
+
+if (!$userId || !$roomId || empty($event)) {
+    Session::setFlash('error', 'Datos incompletos.');
+    header('Location: '. BASE_URL . '/reservations/create');
+    exit;
+}
+```
+
+The system checks that all required data is present.
+
+### 2. Database Transaction
+
+Your reservation is created in a database transaction to ensure data integrity:
+
+```php
+$db = Database::getConnection();
+$db->beginTransaction();
+
+try {
+    // 1. Create reservation
+    $reservationId = $reservationModel->create($userId, (int)$roomId, $event, $notes ?: null);
+    
+    // 2. Create time slots
+    foreach ($dates as $index => $date) {
+        // Validate and create each slot
+    }
+    
+    // 3. Attach materials
+    $reservationModel->attachMaterials($reservationId, $materials);
+    
+    $db->commit();
+    
+    Session::setFlash('success', 'La reservación fue creada correctamente.');
+    header('Location:'. BASE_URL.'/dashboard');
+    exit;
+    
+} catch (Exception $e) {
+    if(isset($db) && $db->inTransaction()){
+        $db->rollBack();
+    }
+    
+    Session::setFlash('error', $e->getMessage());
+    header('Location: ' . BASE_URL . '/reservations/create');
+    exit;
+}
+```
+
+<Info>
+The transaction ensures that if any step fails, all changes are rolled back. Your reservation is only created if all validations pass.
+</Info>
+
+### 3. Success Response
+
+On successful submission:
+
+- Flash message: "La reservación fue creada correctamente"
+- Redirect to dashboard
+- Reservation created with status `pendiente`
+- Awaiting administrator review
+
+## Common Errors and Solutions
+
+### "Datos incompletos" (Incomplete Data)
+
+**Cause**: Missing required fields
+
+**Solution**: Ensure you've filled in:
+- Room selection
+- Event name
+- At least one time slot with date, start time, and end time
+
+### "Debe agregar al menos un horario" (Must Add at Least One Time Slot)
+
+**Cause**: No time slots provided
+
+**Solution**: Fill in at least one complete time slot before submitting.
+
+### "Conflicto de horario" (Schedule Conflict)
+
+**Cause**: Your requested time overlaps with an existing approved reservation
+
+**Solution**: 
+- Try a different time slot
+- Choose a different date
+- Select a different room
+- Contact an administrator to discuss options
+
+### "Bloque horario incompleto" (Incomplete Time Block)
+
+**Cause**: One of your time slots is missing date, start time, or end time
+
+**Solution**: Complete all fields for every time slot you've added.
+
+### "Seleccionaste materiales no válidos" (Invalid Materials Selected)
+
+**Cause**: Selected materials don't belong to the chosen room
+
+**Solution**: This usually indicates a technical issue. Try:
+- Refreshing the page
+- Reselecting the room
+- Only choosing materials that appear after room selection
+
+## After Submission
+
+Once your reservation is successfully created:
+
+<Steps>
+  <Step title="Confirmation">
+    You'll see a success message and be redirected to your dashboard.
+  </Step>
+  
+  <Step title="Initial Status">
+    Your reservation is created with status `pendiente` (pending).
+  </Step>
+  
+  <Step title="Admin Review">
+    An administrator will review your request and either approve or reject it.
+  </Step>
+  
+  <Step title="Check Status">
+    Monitor your reservation status by visiting "Mis solicitudes" (My Requests) from the dashboard.
+  </Step>
+</Steps>
+
+<Tip>
+Administrators typically review requests within 1-2 business days. For urgent requests, consider contacting an administrator directly.
+</Tip>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Plan Ahead">
+    Submit requests at least 3-5 days before your event date to allow time for review and approval.
+  </Accordion>
+  
+  <Accordion title="Be Specific">
+    Use descriptive event names and detailed notes. "Team Meeting" is less helpful than "Q4 Sales Team Strategy Meeting".
+  </Accordion>
+  
+  <Accordion title="Check Availability First">
+    Consider checking with administrators or reviewing existing schedules before submitting to avoid conflicts.
+  </Accordion>
+  
+  <Accordion title="Accurate Time Estimates">
+    Request realistic time blocks. Include setup and teardown time in your start and end times.
+  </Accordion>
+  
+  <Accordion title="Only Request Needed Materials">
+    Don't select materials "just in case". Only request what you actually need to help administrators prepare efficiently.
+  </Accordion>
+  
+  <Accordion title="Provide Contact Info">
+    Include contact information in your notes so administrators can reach you with questions.
+  </Accordion>
+</AccordionGroup>
+
+## Example Reservation Workflow
+
+Here's a complete example:
+
+<Steps>
+  <Step title="Initial Setup">
+    User "jsmith" logs in and navigates to create reservation form.
+  </Step>
+  
+  <Step title="Room Selection">
+    Selects "Conference Room A" from dropdown.
+  </Step>
+  
+  <Step title="Event Details">
+    - Event Name: "Product Launch Planning"
+    - Notes: "Need U-shape seating for 20 people. John Smith (ext. 1234) will be onsite by 8:30am for setup."
+  </Step>
+  
+  <Step title="Time Slots">
+    - Date: 2026-03-15
+    - Start Time: 09:00
+    - End Time: 12:00
+  </Step>
+  
+  <Step title="Materials">
+    Checks:
+    - Projector
+    - Whiteboard
+    - Video conferencing system
+  </Step>
+  
+  <Step title="Submission">
+    Clicks "Enviar solicitud". System validates and creates reservation #47.
+  </Step>
+  
+  <Step title="Confirmation">
+    Success message appears. User is redirected to dashboard. Reservation is pending admin review.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="User Role Guide" icon="user" href="/guides/user-role">
+    Learn about all user capabilities
+  </Card>
+  
+  <Card title="Managing Requests" icon="list-check" href="/guides/managing-requests">
+    How administrators review and process requests
+  </Card>
+</CardGroup>

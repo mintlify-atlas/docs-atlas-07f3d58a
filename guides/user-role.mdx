@@ -1,0 +1,246 @@
+---
+title: 'User Role Guide'
+description: 'Complete guide for regular users in Apartado de Salas'
+---
+
+## Overview
+
+As a regular user in Apartado de Salas, you can create room reservation requests, view available rooms and materials, and track the status of your submissions. This guide covers all the capabilities and workflows available to you.
+
+## User Capabilities
+
+Regular users have access to the following features:
+
+- **Create Reservations**: Submit requests to reserve rooms for events
+- **View Personal Requests**: Monitor the status of your reservation submissions
+- **Browse Rooms**: See available rooms and their associated materials
+- **Track Status**: Check if your requests are pending, approved, or rejected
+
+<Note>
+Users cannot approve or reject reservations. Only administrators have these permissions.
+</Note>
+
+## Accessing the System
+
+<Steps>
+  <Step title="Login">
+    Navigate to the system login page and enter your credentials. The system uses session-based authentication managed by `app/Helpers/Auth.php:24`.
+  </Step>
+  
+  <Step title="Dashboard Access">
+    After successful login, you'll be redirected to your dashboard where you can access all user features.
+  </Step>
+</Steps>
+
+## Creating Your First Reservation
+
+To create a room reservation, navigate to the reservation creation form:
+
+<Steps>
+  <Step title="Access Create Form">
+    Click on "Apartar sala" (Reserve Room) from your dashboard. This loads the form at `/reservations/create`.
+  </Step>
+  
+  <Step title="Select Room">
+    Choose a room from the dropdown menu. Available rooms are loaded from the database and displayed dynamically.
+  </Step>
+  
+  <Step title="View Available Materials">
+    Once you select a room, the system automatically fetches and displays materials available for that specific room via AJAX call to `/api/materials?room_id={roomId}`.
+  </Step>
+  
+  <Step title="Enter Event Details">
+    Fill in the required fields:
+    - **Event Name**: A descriptive name for your event (required)
+    - **Notes**: Any additional observations or requirements (optional)
+  </Step>
+</Steps>
+
+<Tip>
+Provide clear event names and detailed notes to help administrators understand and approve your request faster.
+</Tip>
+
+## Adding Time Slots
+
+Reservations require at least one time slot. You can add multiple slots if your event spans multiple days or time periods:
+
+<Steps>
+  <Step title="Fill First Time Slot">
+    The form includes one time slot by default with these fields:
+    - **Date**: Select the reservation date
+    - **Start Time**: Event start time
+    - **End Time**: Event end time
+  </Step>
+  
+  <Step title="Add Additional Slots">
+    Click "Agregar otro horario" (Add another time slot) to add more slots. Each slot is validated for conflicts in `app/controllers/ReservationController.php:86`.
+  </Step>
+</Steps>
+
+<Warning>
+The system checks for scheduling conflicts. If your requested time overlaps with an existing approved reservation, your submission will be rejected with an error message indicating the conflicting date and time.
+</Warning>
+
+## Selecting Materials
+
+Materials are room-specific and displayed only after selecting a room:
+
+1. **Automatic Loading**: Materials load dynamically when you select a room
+2. **Multiple Selection**: Check all materials you need for your event
+3. **Validation**: The system validates that selected materials belong to the chosen room (`app/controllers/ReservationController.php:94`)
+
+<Note>
+If a room has no associated materials, you'll see a message: "No hay materiales disponibles para esta sala."
+</Note>
+
+## Submitting Your Request
+
+Once all fields are completed:
+
+<Steps>
+  <Step title="Review Information">
+    Double-check your room selection, event details, time slots, and materials.
+  </Step>
+  
+  <Step title="Submit">
+    Click "Enviar solicitud" (Submit Request). The form submits via POST to `/reservations/store`.
+  </Step>
+  
+  <Step title="Confirmation">
+    If successful, you'll see a success message and be redirected to your dashboard. The reservation is created with status `pendiente` (pending).
+  </Step>
+</Steps>
+
+## Viewing Your Reservations
+
+Access your personal reservation history:
+
+<Steps>
+  <Step title="Navigate to My Requests">
+    Click "Mis solicitudes" (My Requests) from the dashboard. This route is handled by `app/controllers/ReservationController.php:243`.
+  </Step>
+  
+  <Step title="Review Status">
+    View all your reservations in a table format showing:
+    - Event name
+    - Room name
+    - Current status (Pendiente, Aprobado, Rechazado)
+    - Submission date
+  </Step>
+</Steps>
+
+## Understanding Request Status
+
+Your reservations can have three statuses:
+
+<CardGroup cols={3}>
+  <Card title="Pendiente" icon="clock">
+    Your request is waiting for administrator review. No action required from you.
+  </Card>
+  
+  <Card title="Aprobado" icon="check">
+    Your reservation has been approved. The room is reserved for your specified time slots.
+  </Card>
+  
+  <Card title="Rechazado" icon="xmark">
+    Your request was rejected. Contact an administrator to understand why and submit a new request if needed.
+  </Card>
+</CardGroup>
+
+## Validation and Error Handling
+
+The system performs several validations when you submit a reservation:
+
+### Required Field Validation
+
+```php
+if (!$userId || !$roomId || empty($event)) {
+    Session::setFlash('error', 'Datos incompletos.');
+    header('Location: '. BASE_URL . '/reservations/create');
+    exit;
+}
+```
+
+Ensure all required fields are filled to avoid submission errors.
+
+### Time Slot Validation
+
+```php
+if (count($dates) === 0) {
+    Session::setFlash('error', 'Debe agregar al menos un horario.');
+    header('Location: '. BASE_URL . '/reservations/create');
+    exit;
+}
+```
+
+At least one time slot is required for every reservation.
+
+### Conflict Detection
+
+```php
+if ($slotModel->hasConflict((int)$roomId, $date, $start, $end)) {
+    throw new Exception("Conflicto de horario el $date de $start a $end.");
+}
+```
+
+The system prevents double-booking by checking for existing reservations during your requested time.
+
+<Info>
+All validations happen server-side in `app/controllers/ReservationController.php:25` for security and data integrity.
+</Info>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Plan Ahead">
+    Submit reservation requests well in advance to ensure availability and give administrators time to review.
+  </Accordion>
+  
+  <Accordion title="Provide Details">
+    Use the notes field to explain special requirements, expected attendance, or setup needs.
+  </Accordion>
+  
+  <Accordion title="Check Conflicts">
+    Before submitting, consider checking existing reservations to avoid requesting conflicting time slots.
+  </Accordion>
+  
+  <Accordion title="Select Appropriate Materials">
+    Only select materials you actually need. This helps administrators prepare the room efficiently.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Cannot See Materials
+
+**Issue**: Material list doesn't load after selecting a room
+
+**Solution**: Ensure JavaScript is enabled in your browser. The material loading uses AJAX requests.
+
+### Submission Errors
+
+**Issue**: Form submission fails with validation errors
+
+**Solution**: Check that:
+- All required fields are filled
+- At least one time slot is added
+- End time is after start time
+- Selected materials are valid for the chosen room
+
+### Session Expired
+
+**Issue**: Redirected to login page unexpectedly
+
+**Solution**: Your session has expired. Log in again to continue. The system requires active authentication via `Auth::requireLogin()` for all reservation operations.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create Reservations" icon="calendar-plus" href="/guides/creating-reservations">
+    Step-by-step guide for creating room reservations
+  </Card>
+  
+  <Card title="Admin Role" icon="user-shield" href="/guides/admin-role">
+    Learn about administrator capabilities
+  </Card>
+</CardGroup>

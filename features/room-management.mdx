@@ -1,0 +1,497 @@
+---
+title: Room Management
+description: Room catalog and availability system for managing bookable spaces
+---
+
+The room management system provides the foundation for the reservation system, maintaining the catalog of available rooms and their associated materials.
+
+## Room Model
+
+The `Room` model handles all database operations related to rooms:
+
+```php
+// From app/models/Room.php:5-12
+class Room
+{
+    private \PDO $db;
+    
+    public function __construct()
+    {
+        $this->db = Database::getConnection();
+    }
+}
+```
+
+## Retrieving Rooms
+
+The system provides methods to query rooms from the database:
+
+### Get All Rooms
+
+```php
+// From app/models/Room.php:17-24
+public function getAll(): array
+{
+    $sql = "SELECT id, name FROM rooms ORDER BY name";
+    $stmt = $this->db->prepare($sql);
+    $stmt->execute();
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+**Returns:** Array of all rooms sorted alphabetically by name.
+
+<Tabs>
+  <Tab title="Usage">
+    ```php
+    $roomModel = new Room();
+    $rooms = $roomModel->getAll();
+    
+    foreach ($rooms as $room) {
+        echo $room['name'];
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Example Output">
+    ```php
+    [
+        ['id' => 1, 'name' => 'Auditorio Principal'],
+        ['id' => 2, 'name' => 'Sala de Conferencias'],
+        ['id' => 3, 'name' => 'Sala de Juntas']
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+  The `getAll()` method is commonly used to populate room selection dropdowns in the reservation form.
+</Info>
+
+### Find Room by ID
+
+```php
+// From app/models/Room.php:29-39
+public function findById(int $id): ?array
+{
+    $sql = "SELECT id, name FROM rooms WHERE id = :id LIMIT 1";
+    $stmt = $this->db->prepare($sql);
+    $stmt->bindParam(':id', $id, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    $room = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    return $room ?: null;
+}
+```
+
+**Returns:** Room data array or `null` if not found.
+
+<Accordion title="Return Value">
+  ```php
+  // Success
+  [
+      'id' => 2,
+      'name' => 'Sala de Conferencias'
+  ]
+  
+  // Not found
+  null
+  ```
+</Accordion>
+
+## Room-Material Association
+
+Rooms are associated with materials through the `room_materials` join table. Each room can have multiple materials, and each material can belong to multiple rooms.
+
+### Get Room Materials
+
+```php
+// From app/models/Room.php:45-63
+public function getMaterials(int $roomId): array
+{
+    $sql = "SELECT 
+                m.id,
+                m.name,
+                rm.quantity
+            FROM room_materials rm
+            JOIN materials m ON m.id = rm.material_id
+            WHERE rm.room_id = :room_id
+            ORDER BY m.name";
+    
+    $stmt = $this->db->prepare($sql);
+    $stmt->bindParam(':room_id', $roomId, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+**Returns:** Array of materials available in the specified room, including quantity information.
+
+<Tabs>
+  <Tab title="Usage">
+    ```php
+    $roomModel = new Room();
+    $materials = $roomModel->getMaterials(2);
+    
+    foreach ($materials as $material) {
+        echo "{$material['name']} (Qty: {$material['quantity']})";
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Example Output">
+    ```php
+    [
+        [
+            'id' => 1,
+            'name' => 'Proyector',
+            'quantity' => 1
+        ],
+        [
+            'id' => 3,
+            'name' => 'Micrófono',
+            'quantity' => 2
+        ],
+        [
+            'id' => 5,
+            'name' => 'Pizarra',
+            'quantity' => 1
+        ]
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  This method is used to display available materials when users create reservations for a specific room.
+</Note>
+
+## Room Data Structure
+
+The room database table has a simple structure:
+
+```sql
+CREATE TABLE rooms (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL
+)
+```
+
+### Basic Room Object
+
+```php
+[
+    'id' => 1,
+    'name' => 'Auditorio Principal'
+]
+```
+
+### Room with Materials
+
+```php
+[
+    'id' => 2,
+    'name' => 'Sala de Conferencias',
+    'materials' => [
+        ['id' => 1, 'name' => 'Proyector', 'quantity' => 1],
+        ['id' => 3, 'name' => 'Micrófono', 'quantity' => 2]
+    ]
+]
+```
+
+## Room Selection in Reservations
+
+When creating a reservation, rooms are loaded into the form for user selection:
+
+<Steps>
+  <Step title="Load room list">
+    ```php
+    $roomModel = new Room();
+    $rooms = $roomModel->getAll();
+    ```
+  </Step>
+  
+  <Step title="Display in form">
+    ```html
+    <select name="room_id" required>
+        <option value="">Seleccionar sala...</option>
+        <?php foreach ($rooms as $room): ?>
+            <option value="<?= $room['id'] ?>">
+                <?= htmlspecialchars($room['name']) ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+    ```
+  </Step>
+  
+  <Step title="Load materials for selected room">
+    When user selects a room (via JavaScript), load associated materials:
+    
+    ```php
+    $materials = $roomModel->getMaterials($_POST['room_id']);
+    ```
+  </Step>
+</Steps>
+
+## Room Availability Checking
+
+While the `Room` model itself doesn't handle availability, the `ReservationSlot` model provides methods to check room availability:
+
+### Check for Conflicts
+
+```php
+// From app/models/ReservationSlot.php:59-85
+public function hasConflict(
+    int $roomId,
+    string $date,
+    string $startTime,
+    string $endTime
+): bool {
+    $sql = "SELECT 1
+            FROM reservation_slots rs
+            JOIN reservations r ON r.id = rs.reservation_id
+            WHERE r.room_id = :room_id
+              AND rs.date = :date
+              AND (rs.start_time < :end_time 
+                   AND rs.end_time > :start_time)
+            LIMIT 1";
+    
+    return (bool) $stmt->fetchColumn();
+}
+```
+
+<Warning>
+  Always check for conflicts before creating a reservation to prevent double-booking:
+  
+  ```php
+  // From app/controllers/ReservationController.php:86-90
+  if ($slotModel->hasConflict((int)$roomId, $date, $start, $end)) {
+      throw new Exception("Conflicto de horario el $date de $start a $end.");
+  }
+  
+  $slotModel->create($reservationId, $date, $start, $end);
+  ```
+</Warning>
+
+### Get Occupied Time Slots
+
+```php
+// From app/models/ReservationSlot.php:91-108
+public function getOccupiedSlots(int $roomId, string $date): array
+{
+    $sql = "SELECT rs.start_time, rs.end_time
+            FROM reservation_slots rs
+            JOIN reservations r ON r.id = rs.reservation_id
+            WHERE r.room_id = :room_id
+              AND rs.date = :date
+            ORDER BY rs.start_time";
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+**Returns:** List of all occupied time slots for a specific room and date.
+
+<Tabs>
+  <Tab title="Usage">
+    ```php
+    $slotModel = new ReservationSlot();
+    $occupied = $slotModel->getOccupiedSlots(2, '2026-03-15');
+    
+    // Display availability calendar
+    foreach ($occupied as $slot) {
+        echo "Occupied: {$slot['start_time']} - {$slot['end_time']}";
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Example Output">
+    ```php
+    [
+        ['start_time' => '09:00', 'end_time' => '11:00'],
+        ['start_time' => '14:00', 'end_time' => '16:00'],
+        ['start_time' => '18:00', 'end_time' => '20:00']
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+  Use this method to build availability calendars showing when a room is free or occupied.
+</Info>
+
+## Room Information in Reservations
+
+Room information is included in reservation queries through SQL joins:
+
+```php
+// From app/models/Reservation.php:45-60
+$sql = "SELECT 
+            r.id,
+            r.user_id,
+            r.room_id,
+            r.event_name,
+            r.status,
+            r.notes,
+            r.created_at,
+            u.username,
+            rm.name AS room_name  -- Room name joined
+        FROM reservations r
+        JOIN users u ON u.id = r.user_id
+        JOIN rooms rm ON rm.id = r.room_id
+        WHERE r.id = :id
+        LIMIT 1";
+```
+
+This ensures reservation objects always include the room name for display purposes.
+
+## Room Management Workflow
+
+The typical workflow for using rooms in the application:
+
+<Steps>
+  <Step title="Browse available rooms">
+    User views list of all rooms in the system.
+    
+    ```php
+    $rooms = $roomModel->getAll();
+    ```
+  </Step>
+  
+  <Step title="Select a room">
+    User chooses a room for their reservation.
+  </Step>
+  
+  <Step title="View room materials">
+    System displays materials available for that room.
+    
+    ```php
+    $materials = $roomModel->getMaterials($roomId);
+    ```
+  </Step>
+  
+  <Step title="Check availability">
+    User selects date/time and system checks for conflicts.
+    
+    ```php
+    $hasConflict = $slotModel->hasConflict($roomId, $date, $start, $end);
+    ```
+  </Step>
+  
+  <Step title="Create reservation">
+    If available, reservation is created with the selected room.
+    
+    ```php
+    $reservationId = $reservationModel->create($userId, $roomId, $event, $notes);
+    ```
+  </Step>
+</Steps>
+
+## Room Queries in Reservation Context
+
+Rooms are frequently queried in the context of reservations:
+
+<Accordion title="Reservation List with Room Names">
+  ```php
+  // From app/models/Reservation.php:78-90
+  $sql = "SELECT 
+              r.id,
+              r.event_name,
+              r.status,
+              r.created_at,
+              rm.name AS room_name,
+              u.username
+          FROM reservations r
+          JOIN rooms rm ON rm.id = r.room_id
+          JOIN users u ON u.id = r.user_id
+          ORDER BY r.created_at DESC";
+  ```
+  
+  Room names are joined to provide context in reservation listings.
+</Accordion>
+
+<Accordion title="User's Reservations with Rooms">
+  ```php
+  // From app/models/Reservation.php:214-224
+  $sql = "SELECT
+              r.id,
+              r.event_name,
+              r.status,
+              r.created_at,
+              rm.name AS room_name
+          FROM reservations r
+          JOIN rooms rm ON rm.id = r.room_id
+          WHERE r.user_id = :user_id
+          ORDER BY r.created_at DESC";
+  ```
+  
+  Users see which rooms they've reserved in their dashboard.
+</Accordion>
+
+## Extending Room Functionality
+
+While the current implementation is minimal, the Room model can be extended to include:
+
+- Room capacity
+- Room type/category
+- Operating hours
+- Location/building information
+- Photos or virtual tours
+- Special requirements or restrictions
+
+<Note>
+  The simple structure makes it easy to add new fields to the `rooms` table and corresponding getter methods in the model.
+</Note>
+
+## Common Room Operations
+
+<Tabs>
+  <Tab title="List All Rooms">
+    ```php
+    $roomModel = new Room();
+    $rooms = $roomModel->getAll();
+    ```
+    
+    Use for: Dropdown menus, room directories
+  </Tab>
+  
+  <Tab title="Get Room Details">
+    ```php
+    $roomModel = new Room();
+    $room = $roomModel->findById($id);
+    
+    if ($room) {
+        echo $room['name'];
+    }
+    ```
+    
+    Use for: Displaying room information
+  </Tab>
+  
+  <Tab title="Get Room with Materials">
+    ```php
+    $roomModel = new Room();
+    $room = $roomModel->findById($id);
+    $materials = $roomModel->getMaterials($id);
+    
+    $roomData = array_merge($room, ['materials' => $materials]);
+    ```
+    
+    Use for: Complete room information pages
+  </Tab>
+  
+  <Tab title="Check Availability">
+    ```php
+    $slotModel = new ReservationSlot();
+    $occupied = $slotModel->getOccupiedSlots($roomId, $date);
+    
+    // Calculate free slots based on occupied
+    $freeSlots = calculateFreeSlots($occupied);
+    ```
+    
+    Use for: Availability calendars
+  </Tab>
+</Tabs>

@@ -1,0 +1,513 @@
+---
+title: 'Reservation Model'
+description: 'API reference for the Reservation model class that manages room reservation records'
+---
+
+# Reservation Model
+
+The `Reservation` model manages room reservation records (expedientes) in the system. It handles the creation, retrieval, and status management of reservations, as well as the association with materials and time slots.
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the Reservation model and establishes a PDO database connection.
+
+## Methods
+
+### create()
+
+Creates a new reservation record.
+
+```php
+public function create(
+    int $userId,
+    int $roomId,
+    string $eventName,
+    ?string $notes = null
+): int
+```
+
+<ParamField path="userId" type="int" required>
+  ID of the user creating the reservation
+</ParamField>
+
+<ParamField path="roomId" type="int" required>
+  ID of the room being reserved
+</ParamField>
+
+<ParamField path="eventName" type="string" required>
+  Name of the event for this reservation
+</ParamField>
+
+<ParamField path="notes" type="string" default="null">
+  Optional notes or additional information about the reservation
+</ParamField>
+
+**Returns:** `int` - The ID of the newly created reservation
+
+**SQL Query:**
+```sql
+INSERT INTO reservations (user_id, room_id, event_name, notes)
+VALUES (:user_id, :room_id, :event_name, :notes)
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$reservationId = $reservation->create(
+    userId: 1,
+    roomId: 3,
+    eventName: 'Conferencia de Prensa',
+    notes: 'Se requiere proyector y micrófonos'
+);
+```
+
+---
+
+### findById()
+
+Retrieves a single reservation by its ID with joined user and room information.
+
+```php
+public function findById(int $id): ?array
+```
+
+<ParamField path="id" type="int" required>
+  The reservation ID to retrieve
+</ParamField>
+
+**Returns:** `?array` - Associative array with reservation data or `null` if not found
+
+<ResponseField name="id" type="int">
+  Reservation ID
+</ResponseField>
+
+<ResponseField name="user_id" type="int">
+  ID of the user who created the reservation
+</ResponseField>
+
+<ResponseField name="room_id" type="int">
+  ID of the reserved room
+</ResponseField>
+
+<ResponseField name="event_name" type="string">
+  Name of the event
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Reservation status: 'pendiente', 'aprobado', or 'rechazado'
+</ResponseField>
+
+<ResponseField name="notes" type="string">
+  Additional notes about the reservation
+</ResponseField>
+
+<ResponseField name="created_at" type="timestamp">
+  Timestamp when the reservation was created
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Username of the person who created the reservation
+</ResponseField>
+
+<ResponseField name="room_name" type="string">
+  Name of the reserved room
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT 
+    r.id, r.user_id, r.room_id, r.event_name,
+    r.status, r.notes, r.created_at,
+    u.username, rm.name AS room_name
+FROM reservations r
+JOIN users u ON u.id = r.user_id
+JOIN rooms rm ON rm.id = r.room_id
+WHERE r.id = :id
+LIMIT 1
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$data = $reservation->findById(15);
+
+if ($data) {
+    echo "Event: " . $data['event_name'];
+    echo "Room: " . $data['room_name'];
+    echo "Status: " . $data['status'];
+}
+```
+
+---
+
+### getAll()
+
+Retrieves all reservations with basic information. Primarily used by the Comunicación y Difusión department.
+
+```php
+public function getAll(): array
+```
+
+**Returns:** `array` - Array of associative arrays containing reservation data
+
+<ResponseField name="id" type="int">
+  Reservation ID
+</ResponseField>
+
+<ResponseField name="event_name" type="string">
+  Name of the event
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current reservation status
+</ResponseField>
+
+<ResponseField name="created_at" type="timestamp">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="room_name" type="string">
+  Name of the reserved room
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Username of the requester
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT 
+    r.id, r.event_name, r.status, r.created_at,
+    rm.name AS room_name, u.username
+FROM reservations r
+JOIN rooms rm ON rm.id = r.room_id
+JOIN users u ON u.id = r.user_id
+ORDER BY r.created_at DESC
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$allReservations = $reservation->getAll();
+
+foreach ($allReservations as $res) {
+    echo "{$res['event_name']} - {$res['status']}\n";
+}
+```
+
+---
+
+### updateStatus()
+
+Updates the status of a reservation. Used by administrators to approve or reject reservations.
+
+```php
+public function updateStatus(int $reservationId, string $status): bool
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation to update
+</ParamField>
+
+<ParamField path="status" type="string" required>
+  The new status. Must be one of: 'pendiente', 'aprobado', 'rechazado'
+</ParamField>
+
+**Returns:** `bool` - `true` if the update was successful
+
+**Throws:** `InvalidArgumentException` - If an invalid status is provided
+
+<Note>
+  The method validates that the status is one of the three allowed values before executing the update.
+</Note>
+
+**SQL Query:**
+```sql
+UPDATE reservations
+SET status = :status
+WHERE id = :id
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+
+try {
+    $reservation->updateStatus(15, 'aprobado');
+    echo "Reservation approved successfully";
+} catch (InvalidArgumentException $e) {
+    echo "Invalid status: " . $e->getMessage();
+}
+```
+
+---
+
+### attachMaterials()
+
+Assigns materials to a reservation. Replaces any previously assigned materials.
+
+```php
+public function attachMaterials(int $reservationId, array $materialIds): void
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation
+</ParamField>
+
+<ParamField path="materialIds" type="array" required>
+  Array of material IDs to assign to the reservation
+</ParamField>
+
+**Returns:** `void`
+
+<Note>
+  This method:
+  1. Deletes all existing material assignments for the reservation
+  2. Normalizes the input array (removes duplicates, filters invalid IDs)
+  3. Inserts new material assignments
+</Note>
+
+**SQL Queries:**
+```sql
+-- Step 1: Delete existing assignments
+DELETE FROM reservation_materials WHERE reservation_id = :id
+
+-- Step 2: Insert new assignments
+INSERT INTO reservation_materials (reservation_id, material_id)
+VALUES (:reservation_id, :material_id)
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$reservation->attachMaterials(15, [1, 3, 5, 7]);
+// Assigns materials with IDs 1, 3, 5, and 7 to reservation 15
+```
+
+---
+
+### getMaterials()
+
+Retrieves all materials assigned to a specific reservation.
+
+```php
+public function getMaterials(int $reservationId): array
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation
+</ParamField>
+
+**Returns:** `array` - Array of associative arrays containing material data
+
+<ResponseField name="id" type="int">
+  Material ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Material name
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT m.id, m.name
+FROM reservation_materials rm
+JOIN materials m ON m.id = rm.material_id
+WHERE rm.reservation_id = :reservation_id
+ORDER BY m.name
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$materials = $reservation->getMaterials(15);
+
+foreach ($materials as $material) {
+    echo "- {$material['name']}\n";
+}
+```
+
+---
+
+### getByStatus()
+
+Retrieves reservations filtered by their status.
+
+```php
+public function getByStatus(string $status): array
+```
+
+<ParamField path="status" type="string" required>
+  The status to filter by: 'pendiente', 'aprobado', or 'rechazado'
+</ParamField>
+
+**Returns:** `array` - Array of reservations with the specified status, or empty array if invalid status
+
+<ResponseField name="id" type="int">
+  Reservation ID
+</ResponseField>
+
+<ResponseField name="event_name" type="string">
+  Name of the event
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Reservation status
+</ResponseField>
+
+<ResponseField name="created_at" type="timestamp">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="room_name" type="string">
+  Name of the reserved room
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Username of the requester
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT 
+    r.id, r.event_name, r.status, r.created_at,
+    rm.name AS room_name, u.username
+FROM reservations r
+JOIN rooms rm ON rm.id = r.room_id
+JOIN users u ON u.id = r.user_id
+WHERE r.status = :status
+ORDER BY r.created_at DESC
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$pending = $reservation->getByStatus('pendiente');
+
+echo "Pending reservations: " . count($pending);
+```
+
+---
+
+### getByUser()
+
+Retrieves all reservations created by a specific user.
+
+```php
+public function getByUser(int $userId): array
+```
+
+<ParamField path="userId" type="int" required>
+  The ID of the user
+</ParamField>
+
+**Returns:** `array` - Array of reservations created by the user
+
+<ResponseField name="id" type="int">
+  Reservation ID
+</ResponseField>
+
+<ResponseField name="event_name" type="string">
+  Name of the event
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current reservation status
+</ResponseField>
+
+<ResponseField name="created_at" type="timestamp">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="room_name" type="string">
+  Name of the reserved room
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT r.id, r.event_name, r.status, r.created_at,
+       rm.name AS room_name
+FROM reservations r
+JOIN rooms rm ON rm.id = r.room_id
+WHERE r.user_id = :user_id
+ORDER BY r.created_at DESC
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$userReservations = $reservation->getByUser(5);
+
+foreach ($userReservations as $res) {
+    echo "{$res['event_name']} ({$res['status']})\n";
+}
+```
+
+---
+
+### getSlots()
+
+Retrieves all time slots associated with a reservation.
+
+```php
+public function getSlots(int $reservationId): array
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation
+</ParamField>
+
+**Returns:** `array` - Array of time slot data ordered by date and start time
+
+<ResponseField name="date" type="string">
+  Date of the time slot (YYYY-MM-DD)
+</ResponseField>
+
+<ResponseField name="start_time" type="string">
+  Start time of the slot (HH:MM:SS)
+</ResponseField>
+
+<ResponseField name="end_time" type="string">
+  End time of the slot (HH:MM:SS)
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT date, start_time, end_time
+FROM reservation_slots
+WHERE reservation_id = :id
+ORDER BY date, start_time
+```
+
+**Example:**
+```php
+$reservation = new Reservation();
+$slots = $reservation->getSlots(15);
+
+foreach ($slots as $slot) {
+    echo "{$slot['date']}: {$slot['start_time']} - {$slot['end_time']}\n";
+}
+```
+
+## Database Schema
+
+The Reservation model interacts with the following database tables:
+
+- **reservations** - Main reservation records
+- **reservation_slots** - Time slots for each reservation
+- **reservation_materials** - Junction table linking reservations to materials
+- **users** - User information
+- **rooms** - Room information
+- **materials** - Material catalog
+
+## Status Values
+
+Reservations can have one of three statuses:
+
+- `pendiente` - Pending approval
+- `aprobado` - Approved by Comunicación y Difusión
+- `rechazado` - Rejected

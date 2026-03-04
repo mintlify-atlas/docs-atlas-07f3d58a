@@ -1,0 +1,413 @@
+---
+title: 'Auth'
+description: 'Authentication helper class for verifying user identity and role-based access control'
+---
+
+## Overview
+
+The `Auth` helper class provides static methods for authentication checks and role-based access control (RBAC). It works in conjunction with the Session helper to manage user authentication state.
+
+**Location**: `app/Helpers/Auth.php`
+
+<Note>
+  Auth is a **static helper class** - all methods are called statically without instantiation.
+</Note>
+
+## Key Features
+
+- Check if user is authenticated
+- Retrieve authenticated user data
+- Require authentication for protected routes
+- Role-based access control
+- Automatic redirects for unauthorized access
+
+## Public Methods
+
+### check()
+
+Verifies if a user session is active.
+
+```php
+public static function check(): bool
+```
+
+**Returns**: `bool` - `true` if user is authenticated, `false` otherwise
+
+**Example**:
+
+```php
+if (Auth::check()) {
+    echo 'User is logged in';
+} else {
+    echo 'User is a guest';
+}
+```
+
+**Source**: `app/Helpers/Auth.php:10-13`
+
+### user()
+
+Retrieves the currently authenticated user's data.
+
+```php
+public static function user(): ?array
+```
+
+**Returns**: `?array` - Associative array with user data, or `null` if not authenticated
+
+**User Data Structure**:
+```php
+[
+    'id'       => 1,
+    'username' => 'admin',
+    'email'    => 'admin@example.com',
+    'role'     => 'admin',  // 'admin', 'user', or 'encargado'
+    'name'     => 'Administrator'
+]
+```
+
+**Example**:
+
+```php
+$user = Auth::user();
+
+if ($user) {
+    echo "Welcome, {$user['name']}!";
+    echo "Your role is: {$user['role']}";
+}
+```
+
+**Source**: `app/Helpers/Auth.php:17-20`
+
+### requireLogin()
+
+Enforces authentication - redirects to login page if user is not authenticated.
+
+```php
+public static function requireLogin(): void
+```
+
+This method:
+- Checks if user is authenticated
+- If not authenticated, redirects to `/login`
+- Terminates script execution after redirect
+
+**Example**:
+
+```php
+class DashboardController
+{
+    public function index(): void
+    {
+        // Protect this route - only authenticated users can access
+        Auth::requireLogin();
+        
+        require_once dirname(__DIR__) . '/views/dashboard/index.php';
+    }
+}
+```
+
+**Source**: `app/Helpers/Auth.php:24-30`
+
+### hasRole()
+
+Checks if the authenticated user has a specific role.
+
+```php
+public static function hasRole(string $role): bool
+```
+
+<ParamField path="role" type="string" required>
+  Role to check for. Available roles: `admin`, `user`, `encargado`
+</ParamField>
+
+**Returns**: `bool` - `true` if user has the specified role, `false` otherwise
+
+**Example**:
+
+```php
+if (Auth::hasRole('admin')) {
+    echo '<a href="/reservations">Manage All Reservations</a>';
+}
+
+if (Auth::hasRole('encargado')) {
+    echo '<a href="/materials/manage">Manage Materials</a>';
+}
+```
+
+**Source**: `app/Helpers/Auth.php:34-41`
+
+### requireRole()
+
+Enforces role-based access control - returns 403 error if user doesn't have required role.
+
+```php
+public static function requireRole(string $role): void
+```
+
+<ParamField path="role" type="string" required>
+  Required role for access. Available roles: `admin`, `user`, `encargado`
+</ParamField>
+
+This method:
+- First ensures user is authenticated (calls `requireLogin()`)
+- Checks if user has the specified role
+- If role doesn't match, returns HTTP 403 and terminates
+- If role matches, execution continues
+
+**Example**:
+
+```php
+class ReservationController
+{
+    public function index(): void
+    {
+        // Only admins can view all reservations
+        Auth::requireRole('admin');
+        
+        $reservationModel = new Reservation();
+        $reservations = $reservationModel->getAll();
+        
+        require_once dirname(__DIR__) . '/views/reservations/index.php';
+    }
+    
+    public function approve(): void
+    {
+        // Only admins can approve reservations
+        Auth::requireRole('admin');
+        
+        $id = $_POST['id'] ?? null;
+        $reservationModel = new Reservation();
+        $reservationModel->updateStatus((int)$id, 'aprobado');
+        
+        Session::setFlash('success', 'Solicitud aprobada correctamente.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+}
+```
+
+**Source**: `app/Helpers/Auth.php:46-55`
+
+## Real-World Usage Examples
+
+### Protecting Routes in Controllers
+
+From `DashboardController`:
+
+```php
+class DashboardController
+{
+    public function index(): void
+    {
+        Auth::requireLogin();
+        
+        require_once dirname(__DIR__) . '/views/dashboard/index.php';
+    }
+}
+```
+
+**Source**: `app/controllers/DashboardController.php:8-13`
+
+### Admin-Only Actions
+
+From `ReservationController`:
+
+```php
+public function index(): void
+{
+    // Only admins can view all reservations
+    Auth::requireRole('admin');
+    
+    $reservationModel = new Reservation();
+    
+    // Filter by status if provided
+    $status = $_GET['status'] ?? null;
+    
+    if ($status) {
+        $reservations = $reservationModel->getByStatus($status);
+    } else {
+        $reservations = $reservationModel->getAll();
+    }
+    
+    require_once dirname(__DIR__) . '/views/reservations/index.php';
+}
+
+public function approve(): void
+{
+    Auth::requireRole('admin');
+    
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $id = $_POST['id'] ?? null;
+    
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud inválida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $reservationModel = new Reservation();
+    $reservationModel->updateStatus((int)$id, 'aprobado');
+    
+    Session::setFlash('success', 'Solicitud aprobada correctamente.');
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+**Source**: `app/controllers/ReservationController.php:122-203`
+
+### Conditional UI Elements
+
+In views:
+
+```php
+<?php if (Auth::check()): ?>
+    <div class="user-menu">
+        <span>Welcome, <?= htmlspecialchars(Auth::user()['name']) ?></span>
+        <a href="<?= BASE_URL ?>/logout">Logout</a>
+    </div>
+<?php else: ?>
+    <a href="<?= BASE_URL ?>/login">Login</a>
+<?php endif; ?>
+
+<?php if (Auth::hasRole('admin')): ?>
+    <a href="<?= BASE_URL ?>/reservations" class="btn btn-primary">
+        Manage All Reservations
+    </a>
+<?php endif; ?>
+```
+
+### Creating User Sessions
+
+From `AuthController::login()`:
+
+```php
+public function login(): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+    
+    $user = $_POST['username'] ?? '';
+    $pass = $_POST['password'] ?? '';
+    
+    if (empty($user) || empty($pass)) {
+        Session::setFlash('error', 'Todos los campos son obligatorios.');
+        header('Location: login');
+        exit;
+    }
+    
+    $userModel = new User();
+    $authResult = $userModel->authenticate($user, $pass);
+    
+    if (!$authResult) {
+        Session::setFlash('error', 'Usuario o contraseña incorrectos.');
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+    
+    // Create session - Auth::user() will now return this data
+    Session::create($authResult);
+    
+    header('Location: ' . BASE_URL . '/dashboard');
+    exit;
+}
+```
+
+**Source**: `app/controllers/AuthController.php:19-51`
+
+## Role System
+
+Apartado de Salas uses a three-tier role system:
+
+<ParamField path="admin" type="role">
+  Full system access. Can approve/reject reservations, manage all resources, and access all areas.
+</ParamField>
+
+<ParamField path="encargado" type="role">
+  Manager role. Can manage materials and rooms but cannot approve reservations.
+</ParamField>
+
+<ParamField path="user" type="role">
+  Standard user. Can create reservations and view their own submissions.
+</ParamField>
+
+## Implementation Details
+
+### Dependency on Session Helper
+
+```php
+require_once __DIR__ . '/Session.php';
+
+class Auth
+{
+    public static function check(): bool
+    {
+        return Session::isActive();
+    }
+    
+    public static function user(): ?array
+    {
+        return $_SESSION['user'] ?? null;
+    }
+}
+```
+
+**Source**: `app/Helpers/Auth.php:3-20`
+
+The Auth helper relies on the Session helper's `isActive()` method and directly accesses `$_SESSION['user']`.
+
+### Redirect Mechanism
+
+Both `requireLogin()` and `requireRole()` use the `BASE_URL` constant for redirects:
+
+```php
+public static function requireLogin(): void
+{
+    if (!self::check()) {
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+}
+```
+
+The `BASE_URL` constant is defined in `app/config/app.php`.
+
+## Security Considerations
+
+<Note>
+  Always call `Auth::requireLogin()` or `Auth::requireRole()` at the **beginning** of controller methods before any business logic or database queries.
+</Note>
+
+**Good**:
+```php
+public function create(): void
+{
+    Auth::requireLogin();  // First line
+    
+    // Now safe to proceed
+    require_once dirname(__DIR__) . '/views/reservations/create.php';
+}
+```
+
+**Bad**:
+```php
+public function create(): void
+{
+    $reservations = $model->getAll();  // Data exposed before auth check!
+    
+    Auth::requireLogin();  // Too late
+}
+```
+
+## See Also
+
+- [Session Helper](/api/session-helper) - For session management
+- [Router Class](/api/router) - For defining protected routes
+- [User Model](/api/user-model) - For user authentication

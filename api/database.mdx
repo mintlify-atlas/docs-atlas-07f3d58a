@@ -1,0 +1,315 @@
+---
+title: 'Database'
+description: 'Singleton database connection manager using PDO for MySQL operations'
+---
+
+## Overview
+
+The `Database` class provides a singleton PDO connection to the MySQL database. It ensures only one connection is created throughout the application lifecycle and provides configured PDO instances with proper error handling.
+
+**Location**: `app/core/Database.php`
+
+<Note>
+  The Database class uses the **Singleton pattern** to maintain a single connection across all database operations, improving performance and resource management.
+</Note>
+
+## Key Features
+
+- Singleton PDO connection
+- Automatic configuration loading
+- UTF-8 charset by default
+- Exception-based error mode
+- Associative array fetch mode
+- Transaction support via PDO
+
+## Public Methods
+
+### getConnection()
+
+Returns the active PDO connection instance. Creates the connection on first call.
+
+```php
+public static function getConnection(): PDO
+```
+
+**Returns**: `PDO` - Configured PDO instance connected to MySQL
+
+**Example**:
+
+```php
+// Get database connection
+$db = Database::getConnection();
+
+// Execute a query
+$stmt = $db->prepare('SELECT * FROM users WHERE id = :id');
+$stmt->bindParam(':id', $userId, PDO::PARAM_INT);
+$stmt->execute();
+$user = $stmt->fetch();
+```
+
+## Configuration
+
+The Database class loads configuration from `app/config/database.php`:
+
+```php
+<?php
+
+return [
+    'host'     => 'localhost',
+    'dbname'   => 'apartado_salas',
+    'user'     => 'root',
+    'password' => '',
+    'charset'  => 'utf8mb4',
+];
+```
+
+## PDO Configuration
+
+The connection is configured with the following PDO attributes:
+
+```php
+[
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+]
+```
+
+**Source**: `app/core/Database.php:33-36`
+
+<ParamField path="PDO::ATTR_ERRMODE" type="constant">
+  Set to `PDO::ERRMODE_EXCEPTION` to throw exceptions on database errors
+</ParamField>
+
+<ParamField path="PDO::ATTR_DEFAULT_FETCH_MODE" type="constant">
+  Set to `PDO::FETCH_ASSOC` to return associative arrays by default
+</ParamField>
+
+## Usage Examples
+
+### Basic Query
+
+```php
+$db = Database::getConnection();
+
+$stmt = $db->prepare('SELECT * FROM rooms WHERE id = :id');
+$stmt->bindParam(':id', $roomId, PDO::PARAM_INT);
+$stmt->execute();
+
+$room = $stmt->fetch(); // Returns associative array
+```
+
+### Insert Operation
+
+```php
+$db = Database::getConnection();
+
+$sql = "INSERT INTO reservations (user_id, room_id, event_name, notes, status) 
+        VALUES (:user_id, :room_id, :event_name, :notes, 'pendiente')";
+
+$stmt = $db->prepare($sql);
+$stmt->bindParam(':user_id', $userId, PDO::PARAM_INT);
+$stmt->bindParam(':room_id', $roomId, PDO::PARAM_INT);
+$stmt->bindParam(':event_name', $eventName, PDO::PARAM_STR);
+$stmt->bindParam(':notes', $notes, PDO::PARAM_STR);
+$stmt->execute();
+
+$reservationId = $db->lastInsertId();
+```
+
+### Transactions
+
+```php
+$db = Database::getConnection();
+
+try {
+    // Start transaction
+    $db->beginTransaction();
+    
+    // Create reservation
+    $stmt = $db->prepare('INSERT INTO reservations (user_id, room_id, event_name) 
+                          VALUES (:user_id, :room_id, :event_name)');
+    $stmt->execute([
+        ':user_id'    => $userId,
+        ':room_id'    => $roomId,
+        ':event_name' => $eventName,
+    ]);
+    
+    $reservationId = $db->lastInsertId();
+    
+    // Create time slots
+    $stmt = $db->prepare('INSERT INTO reservation_slots (reservation_id, date, start_time, end_time) 
+                          VALUES (:reservation_id, :date, :start_time, :end_time)');
+    
+    foreach ($slots as $slot) {
+        $stmt->execute([
+            ':reservation_id' => $reservationId,
+            ':date'           => $slot['date'],
+            ':start_time'     => $slot['start_time'],
+            ':end_time'       => $slot['end_time'],
+        ]);
+    }
+    
+    // Commit transaction
+    $db->commit();
+    
+} catch (Exception $e) {
+    // Rollback on error
+    if ($db->inTransaction()) {
+        $db->rollBack();
+    }
+    throw $e;
+}
+```
+
+**Source**: `app/controllers/ReservationController.php:66-102`
+
+### Fetch Multiple Rows
+
+```php
+$db = Database::getConnection();
+
+$stmt = $db->prepare('SELECT * FROM reservations WHERE status = :status ORDER BY created_at DESC');
+$stmt->bindParam(':status', $status, PDO::PARAM_STR);
+$stmt->execute();
+
+$reservations = $stmt->fetchAll(); // Returns array of associative arrays
+```
+
+## Real-World Usage in Controllers
+
+From `ReservationController::store()`:
+
+```php
+public function store(): void
+{
+    Auth::requireLogin();
+    
+    // Get form data
+    $userId   = $_SESSION['user']['id'] ?? null;
+    $roomId   = $_POST['room_id'] ?? null;
+    $event    = trim($_POST['event_name'] ?? '');
+    $notes    = trim($_POST['notes'] ?? '');
+    
+    // Initialize models
+    $reservationModel = new Reservation();
+    $slotModel        = new ReservationSlot();
+    $materialModel    = new Material();
+    
+    try {
+        // Get database connection for transaction
+        $db = Database::getConnection();
+        $db->beginTransaction();
+        
+        // Create reservation
+        $reservationId = $reservationModel->create(
+            $userId,
+            (int)$roomId,
+            $event,
+            $notes ?: null
+        );
+        
+        // Create time slots
+        foreach ($dates as $index => $date) {
+            $start = $startTimes[$index] ?? null;
+            $end   = $endTimes[$index] ?? null;
+            
+            $slotModel->create($reservationId, $date, $start, $end);
+        }
+        
+        // Attach materials
+        $reservationModel->attachMaterials($reservationId, $materials);
+        
+        // Commit transaction
+        $db->commit();
+        
+        Session::setFlash('success', 'La reservación fue creada correctamente.');
+        header('Location: ' . BASE_URL . '/dashboard');
+        exit;
+        
+    } catch (Exception $e) {
+        if (isset($db) && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        
+        Session::setFlash('error', $e->getMessage());
+        header('Location: ' . BASE_URL . '/reservations/create');
+        exit;
+    }
+}
+```
+
+**Source**: `app/controllers/ReservationController.php:25-118`
+
+## Implementation Details
+
+### Singleton Pattern
+
+```php
+private static ?PDO $connection = null;
+
+public static function getConnection(): PDO
+{
+    if (self::$connection === null) {
+        self::connect();
+    }
+    
+    return self::$connection;
+}
+```
+
+**Source**: `app/core/Database.php:5-17`
+
+The static `$connection` property ensures only one PDO instance exists.
+
+### Connection Establishment
+
+```php
+private static function connect(): void
+{
+    $config = require dirname(__DIR__) . '/config/database.php';
+    
+    $dsn = "mysql:host={$config['host']};dbname={$config['dbname']};charset={$config['charset']}";
+    
+    try {
+        self::$connection = new PDO(
+            $dsn,
+            $config['user'],
+            $config['password'],
+            [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            ]
+        );
+    } catch (PDOException $e) {
+        die('Error de conexión a la base de datos');
+    }
+}
+```
+
+**Source**: `app/core/Database.php:22-41`
+
+<Note>
+  In production environments, you should log the actual error message instead of using `die()` and display a generic error to users.
+</Note>
+
+## Error Handling
+
+With `PDO::ERRMODE_EXCEPTION` enabled, any database error throws a `PDOException`:
+
+```php
+try {
+    $db = Database::getConnection();
+    $stmt = $db->prepare('SELECT * FROM invalid_table');
+    $stmt->execute();
+} catch (PDOException $e) {
+    // Handle database errors
+    error_log($e->getMessage());
+    echo 'Database error occurred';
+}
+```
+
+## See Also
+
+- [Router Class](/api/router) - For routing requests to controllers
+- [Reservation Model](/api/reservation-model) - Example model implementation
+- [MVC Pattern](/architecture/mvc-pattern) - Understanding models in MVC

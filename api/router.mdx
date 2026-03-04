@@ -1,0 +1,204 @@
+---
+title: 'Router'
+description: 'Custom routing system for handling HTTP requests and mapping them to controller actions'
+---
+
+## Overview
+
+The `Router` class is a lightweight, custom routing system that maps HTTP requests to controller actions. It provides a simple but powerful way to define routes without external dependencies.
+
+**Location**: `app/core/Router.php`
+
+<Note>
+  The Router uses exact path matching and automatically handles base path normalization for subdirectory deployments.
+</Note>
+
+## Key Features
+
+- HTTP method-based routing (GET, POST, etc.)
+- Automatic base path detection for subdirectory installations
+- Controller auto-loading and instantiation
+- Built-in 404 error handling
+- Zero external dependencies
+
+## Public Methods
+
+### add()
+
+Registers a new route in the routing table.
+
+```php
+public function add(string $method, string $path, string $controller, string $action): void
+```
+
+<ParamField path="method" type="string" required>
+  HTTP method (GET, POST, PUT, DELETE, etc.). Case-insensitive.
+</ParamField>
+
+<ParamField path="path" type="string" required>
+  URL path to match (e.g., `/login`, `/dashboard`, `/reservations/create`)
+</ParamField>
+
+<ParamField path="controller" type="string" required>
+  Name of the controller class (e.g., `AuthController`, `DashboardController`)
+</ParamField>
+
+<ParamField path="action" type="string" required>
+  Method name to call on the controller (e.g., `showLogin`, `index`, `store`)
+</ParamField>
+
+**Example**:
+
+```php
+$router = new Router();
+
+// Simple GET route
+$router->add('GET', '/login', 'AuthController', 'showLogin');
+
+// POST route for form submission
+$router->add('POST', '/login', 'AuthController', 'login');
+
+// Nested resource route
+$router->add('GET', '/reservations/create', 'ReservationController', 'create');
+$router->add('POST', '/reservations/store', 'ReservationController', 'store');
+```
+
+### dispatch()
+
+Processes the current HTTP request and routes it to the appropriate controller action.
+
+```php
+public function dispatch(): void
+```
+
+This method:
+1. Determines the current request path and HTTP method
+2. Searches through registered routes for a match
+3. Loads and instantiates the matching controller
+4. Calls the specified action method
+5. Returns a 404 error if no route matches
+
+**Example**:
+
+```php
+// In public/index.php
+$router = new Router();
+
+// Load route definitions
+require_once __DIR__ . '/../routes/web.php';
+
+// Execute routing
+$router->dispatch();
+```
+
+## Implementation Details
+
+### Base Path Normalization
+
+The Router automatically detects and strips the base path for applications installed in subdirectories:
+
+```php
+// Application URL: http://localhost/dashboard/Portafolio/Apartado-Salas/public/login
+// Extracted path: /login
+```
+
+This is handled by the private `getCurrentPath()` method:
+
+```php
+private function getCurrentPath(): string
+```
+
+### Controller Loading
+
+Controllers are loaded from `app/controllers/` directory:
+
+```php
+private function callAction(string $controllerName, string $action): void
+```
+
+**Source**: `app/core/Router.php:65-82`
+
+The method:
+- Checks if the controller file exists
+- Requires the controller file
+- Instantiates the controller class
+- Verifies the action method exists
+- Calls the action method
+
+### Error Handling
+
+When no route matches, the Router returns a 404 response:
+
+```php
+private function handleNotFound(): void
+```
+
+**Source**: `app/core/Router.php:85-89`
+
+## Complete Usage Example
+
+**routes/web.php**:
+```php
+<?php
+
+// Authentication routes
+$router->add('GET', '/login', 'AuthController', 'showLogin');
+$router->add('POST', '/login', 'AuthController', 'login');
+$router->add('GET', '/logout', 'AuthController', 'logout');
+
+// Root route
+$router->add('GET', '/', 'AuthController', 'showLogin');
+
+// Dashboard
+$router->add('GET', '/dashboard', 'DashboardController', 'index');
+
+// Reservation routes
+$router->add('GET', '/reservations/create', 'ReservationController', 'create');
+$router->add('POST', '/reservations/store', 'ReservationController', 'store');
+$router->add('GET', '/reservations', 'ReservationController', 'index');
+$router->add('POST', '/reservations/approve', 'ReservationController', 'approve');
+$router->add('POST', '/reservations/reject', 'ReservationController', 'reject');
+
+// API endpoints
+$router->add('GET', '/api/materials', 'MaterialController', 'byRoom');
+```
+
+**public/index.php**:
+```php
+<?php
+
+require_once __DIR__ . '/../app/config/app.php';
+require_once __DIR__ . '/../app/core/Router.php';
+
+// Create router instance
+$router = new Router();
+
+// Load routes
+require_once __DIR__ . '/../routes/web.php';
+
+// Execute
+$router->dispatch();
+```
+
+## Design Philosophy
+
+<Note>
+  Unlike Laravel's router which uses regular expressions for dynamic segments, this Router uses **exact path matching**. This makes it simpler but requires explicit routes for each endpoint.
+</Note>
+
+**Benefits**:
+- No regex parsing overhead
+- Predictable routing behavior
+- Easy to debug
+- No external dependencies
+
+**Trade-offs**:
+- Cannot use route parameters like `/users/{id}`
+- Each unique path needs its own route definition
+- Query parameters must be handled manually in controllers
+
+## See Also
+
+- [Database Class](/api/database) - For database operations in controllers
+- [Auth Helper](/api/auth-helper) - For protecting routes
+- [Session Helper](/api/session-helper) - For flash messages and session management

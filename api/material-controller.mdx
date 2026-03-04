@@ -1,0 +1,273 @@
+---
+title: "MaterialController"
+description: "API controller for retrieving materials available for specific rooms"
+---
+
+## Overview
+
+The `MaterialController` provides a JSON API endpoint for fetching materials available for a specific room. This controller is used internally by the reservation system to dynamically load available materials when users select a room.
+
+**Location:** `app/controllers/MaterialController.php`
+
+---
+
+## Methods
+
+### byRoom()
+
+Returns materials available for a specific room in JSON format. Requires authentication.
+
+<ParamField query="room_id" type="int" required>
+  The ID of the room to get materials for (`$_GET['room_id']`)
+</ParamField>
+
+<ParamField path="return" type="void">
+  Outputs JSON response with materials array or error object
+</ParamField>
+
+**Route Mapping:**
+```php
+GET /api/materials -> MaterialController::byRoom()
+```
+
+**Method Signature:**
+```php
+public function byRoom(): void
+```
+
+**Implementation:**
+```php
+Auth::requireLogin();
+
+if (!isset($_GET['room_id'])) {
+    http_response_code(400);
+    echo json_encode(['error' => 'room_id requerido']);
+    return;
+}
+
+$roomId = (int) $_GET['room_id'];
+
+$materialModel = new Material();
+$materials = $materialModel->getByRoom($roomId);
+
+header('Content-Type: application/json');
+echo json_encode($materials);
+```
+
+---
+
+## API Reference
+
+### Endpoint
+
+**GET** `/api/materials`
+
+### Query Parameters
+
+<ParamField query="room_id" type="integer" required>
+  The unique identifier of the room
+</ParamField>
+
+### Authentication
+
+<Note>
+  This endpoint requires user authentication. Unauthenticated requests will be rejected.
+</Note>
+
+### Response
+
+<Tabs>
+  <Tab title="Success Response">
+    **HTTP Status:** `200 OK`
+    
+    **Content-Type:** `application/json`
+    
+    **Response Body:**
+    ```json
+    [
+      {
+        "id": 1,
+        "name": "Proyector",
+        "room_id": 3,
+        "description": "Proyector HD 1080p"
+      },
+      {
+        "id": 2,
+        "name": "Pizarra",
+        "room_id": 3,
+        "description": "Pizarra blanca magnética"
+      },
+      {
+        "id": 5,
+        "name": "Micrófono",
+        "room_id": 3,
+        "description": "Micrófono inalámbrico"
+      }
+    ]
+    ```
+  </Tab>
+  
+  <Tab title="Error Response">
+    **HTTP Status:** `400 Bad Request`
+    
+    **Content-Type:** `application/json`
+    
+    **Response Body:**
+    ```json
+    {
+      "error": "room_id requerido"
+    }
+    ```
+    
+    **When this occurs:**
+    - The `room_id` query parameter is missing
+  </Tab>
+</Tabs>
+
+---
+
+## Usage Examples
+
+### JavaScript (Fetch API)
+
+```javascript
+// Get materials for room ID 3
+fetch('/api/materials?room_id=3')
+  .then(response => {
+    if (!response.ok) {
+      throw new Error('Failed to fetch materials');
+    }
+    return response.json();
+  })
+  .then(materials => {
+    console.log('Available materials:', materials);
+    
+    // Populate material checkboxes
+    materials.forEach(material => {
+      console.log(`${material.name} - ${material.description}`);
+    });
+  })
+  .catch(error => {
+    console.error('Error:', error);
+  });
+```
+
+### jQuery
+
+```javascript
+// Get materials when room selection changes
+$('#room_id').on('change', function() {
+  const roomId = $(this).val();
+  
+  $.ajax({
+    url: '/api/materials',
+    method: 'GET',
+    data: { room_id: roomId },
+    dataType: 'json',
+    success: function(materials) {
+      // Clear existing materials
+      $('#materials-container').empty();
+      
+      // Add material checkboxes
+      materials.forEach(function(material) {
+        const checkbox = `
+          <label>
+            <input type="checkbox" name="materials[]" value="${material.id}">
+            ${material.name} - ${material.description}
+          </label>
+        `;
+        $('#materials-container').append(checkbox);
+      });
+    },
+    error: function(xhr, status, error) {
+      console.error('Error fetching materials:', error);
+      alert('No se pudieron cargar los materiales');
+    }
+  });
+});
+```
+
+### PHP (cURL)
+
+```php
+<?php
+// Example: Fetch materials from another PHP script
+$roomId = 3;
+$url = BASE_URL . '/api/materials?room_id=' . $roomId;
+
+$ch = curl_init();
+curl_setopt($ch, CURLOPT_URL, $url);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'Content-Type: application/json'
+]);
+
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+if ($httpCode === 200) {
+    $materials = json_decode($response, true);
+    
+    foreach ($materials as $material) {
+        echo "Material: {$material['name']}\n";
+        echo "Description: {$material['description']}\n";
+        echo "---\n";
+    }
+} else {
+    $error = json_decode($response, true);
+    echo "Error: {$error['error']}\n";
+}
+?>
+```
+
+---
+
+## Dependencies
+
+```php
+require_once dirname(__DIR__) . '/models/Material.php';
+require_once dirname(__DIR__) . '/Helpers/Auth.php';
+```
+
+**Required Classes:**
+- `Material` - Model for material data access
+- `Auth` - Helper for authentication verification
+
+---
+
+## Integration with Reservation Form
+
+This endpoint is typically called dynamically when a user selects a room in the reservation creation form:
+
+1. **User selects a room** from the dropdown
+2. **JavaScript triggers** an AJAX request to `/api/materials?room_id={selected_room}`
+3. **MaterialController::byRoom()** fetches materials for that room
+4. **Response is used** to populate the materials selection interface
+5. **User selects materials** to include in their reservation
+
+<Note>
+  The materials returned are filtered by room, ensuring users can only select materials that are actually available in the chosen room.
+</Note>
+
+---
+
+## Error Handling
+
+**Missing room_id parameter:**
+```json
+{
+  "error": "room_id requerido"
+}
+```
+**HTTP Status:** `400 Bad Request`
+
+**Invalid room_id (non-existent room):**
+```json
+[]
+```
+**HTTP Status:** `200 OK`  
+**Note:** Returns empty array if room has no materials or doesn't exist
+
+**Authentication failure:**
+Redirects to login page or returns authentication error (handled by `Auth::requireLogin()`)

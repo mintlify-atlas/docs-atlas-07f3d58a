@@ -1,0 +1,251 @@
+---
+title: Installation
+description: Set up Apartado de Salas on your server with PHP and MySQL
+---
+
+## Prerequisites
+
+Before installing Apartado de Salas, ensure your server meets these requirements:
+
+- **PHP 7.4+** with PDO MySQL extension
+- **MySQL 5.7+** or **MariaDB 10.3+**
+- **Apache** or **Nginx** web server
+- **Git** (for cloning the repository)
+
+<Warning>
+  The system uses custom routing through a Front Controller pattern. Ensure your web server is configured to route all requests through `public/index.php`.
+</Warning>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Download the source code from GitHub:
+    
+    ```bash
+    git clone https://github.com/LucyferStarlight/Apartado-de-salas.git
+    cd Apartado-de-salas
+    ```
+    
+    <Info>
+      The `main` branch contains the legacy version. Use the `clean-architecture` branch for the refactored MVC implementation:
+      ```bash
+      git checkout clean-architecture
+      ```
+    </Info>
+  </Step>
+  
+  <Step title="Configure Your Web Server">
+    Set your web server's document root to the `public/` directory.
+    
+    ### Apache Configuration
+    
+    Create or update your `.htaccess` file in the `public/` directory:
+    
+    ```apache
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+    ```
+    
+    Ensure `mod_rewrite` is enabled:
+    ```bash
+    sudo a2enmod rewrite
+    sudo systemctl restart apache2
+    ```
+    
+    ### Nginx Configuration
+    
+    Add this location block to your server configuration:
+    
+    ```nginx
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+    
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+    ```
+  </Step>
+  
+  <Step title="Create the Database">
+    Create a new MySQL database for the application:
+    
+    ```sql
+    CREATE DATABASE sesiones CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    ```
+    
+    <Note>
+      The default database name is `sesiones`. You can use a different name and update the configuration in the next step.
+    </Note>
+  </Step>
+  
+  <Step title="Import Database Schema">
+    Import the database schema and seed data:
+    
+    ```bash
+    mysql -u root -p sesiones < database/schema.sql
+    ```
+    
+    <Info>
+      If a schema file is not provided in the repository, you'll need to create the database structure manually. Check the `/app/models/` directory for table structures referenced in the code.
+    </Info>
+  </Step>
+  
+  <Step title="Configure Database Connection">
+    Update the database configuration file at `app/config/database.php`:
+    
+    ```php
+    <?php
+    
+    return [
+        'host'     => 'localhost',
+        'dbname'   => 'sesiones',
+        'user'     => 'root',
+        'password' => '',
+        'charset'  => 'utf8mb4',
+    ];
+    ```
+    
+    Replace the values with your database credentials:
+    - `host`: Database server hostname (usually `localhost`)
+    - `dbname`: Database name created in step 3
+    - `user`: MySQL username
+    - `password`: MySQL password
+  </Step>
+  
+  <Step title="Configure Application Settings">
+    Update the base URL in `app/config/app.php`:
+    
+    ```php
+    <?php
+    
+    define('BASE_URL', 'http://localhost/Apartado-Salas');
+    ```
+    
+    Set `BASE_URL` to match your installation path:
+    - Local: `http://localhost/Apartado-Salas`
+    - Production: `https://yourdomain.com`
+  </Step>
+  
+  <Step title="Set File Permissions">
+    Ensure the web server has read access to all files:
+    
+    ```bash
+    sudo chown -R www-data:www-data .
+    sudo chmod -R 755 .
+    ```
+    
+    <Warning>
+      Never set permissions to `777`. The web server only needs read access to application files.
+    </Warning>
+  </Step>
+  
+  <Step title="Verify Installation">
+    Open your browser and navigate to your installation URL. You should see the login page.
+    
+    ```
+    http://localhost/Apartado-Salas/login
+    ```
+    
+    If you see the login form, installation is complete!
+  </Step>
+</Steps>
+
+## Front Controller Architecture
+
+The application uses a Front Controller pattern where all requests are routed through `public/index.php`:
+
+```php
+<?php
+// public/index.php
+
+require_once __DIR__ . '/../app/config/app.php';
+require_once __DIR__ . '/../app/Helpers/Session.php';
+require_once __DIR__ . '/../app/core/Router.php';
+
+$router = new Router();
+
+// Load routes
+require_once __DIR__ . '/../routes/web.php';
+
+// Execute router
+$router->dispatch();
+```
+
+This ensures:
+- Clean URLs without `.php` extensions
+- Centralized request handling
+- Consistent routing logic
+- Protection of application files outside `public/`
+
+## Database Structure
+
+The system uses these core tables:
+
+- **users**: User accounts with role assignment
+- **rooms**: Available rooms for reservation
+- **materials**: Materials catalog
+- **room_materials**: Room-specific material availability
+- **reservations**: Reservation requests (parent record)
+- **reservation_slots**: Date/time slots for each reservation
+- **reservation_materials**: Materials assigned to reservations
+
+<Info>
+  All database operations use PDO with prepared statements for security. See [Database Architecture](/architecture/database) for details.
+</Info>
+
+## Troubleshooting
+
+### 404 Errors on All Routes
+
+**Problem**: Login page works, but all other pages show 404 errors.
+
+**Solution**: Your web server isn't routing requests through `index.php`. Check your `.htaccess` (Apache) or Nginx configuration.
+
+### Database Connection Failed
+
+**Problem**: "Error de conexión a la base de datos" message.
+
+**Solution**: 
+- Verify database credentials in `app/config/database.php`
+- Ensure MySQL service is running: `sudo systemctl status mysql`
+- Check PDO MySQL extension: `php -m | grep pdo_mysql`
+
+### Blank Page After Login
+
+**Problem**: Login succeeds but shows a blank page.
+
+**Solution**:
+- Enable error display in `public/index.php`:
+  ```php
+  ini_set('display_errors', 1);
+  error_reporting(E_ALL);
+  ```
+- Check PHP error logs: `tail -f /var/log/apache2/error.log`
+
+### Sessions Not Persisting
+
+**Problem**: Login works but immediately logs out.
+
+**Solution**:
+- Verify PHP session directory is writable: `ls -la /var/lib/php/sessions/`
+- Check session configuration in `php.ini`
+- Ensure cookies are enabled in your browser
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Try the system with demo credentials and create your first reservation
+  </Card>
+  
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Learn how the MVC pattern is implemented in this project
+  </Card>
+</CardGroup>

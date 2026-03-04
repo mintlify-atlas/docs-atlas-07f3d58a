@@ -1,0 +1,685 @@
+---
+title: 'Managing Reservation Requests'
+description: 'Administrator guide for reviewing, approving, and rejecting room reservation requests'
+---
+
+## Overview
+
+This guide provides administrators with detailed workflows for managing room reservation requests in Apartado de Salas. Learn how to efficiently review submissions, make informed decisions, and maintain the reservation system.
+
+## Prerequisites
+
+To manage requests, you must:
+
+- Have an administrator account (`role = 'admin'`)
+- Be authenticated to the system
+- Understand the room inventory and scheduling constraints
+
+<Warning>
+All request management actions require admin role. Attempting to access these features without proper authorization results in a 403 Forbidden error.
+</Warning>
+
+## Accessing the Request Management Interface
+
+<Steps>
+  <Step title="Login as Admin">
+    Authenticate using your administrator credentials.
+  </Step>
+  
+  <Step title="Navigate to Reservations">
+    Go to `/reservations` from your dashboard. This route is protected by:
+    
+    ```php
+    Auth::requireRole('admin');
+    ```
+    
+    Only users with admin role can access this page.
+  </Step>
+  
+  <Step title="View All Requests">
+    The reservations index page (`app/views/reservations/index.php`) displays all reservation requests in a table format.
+  </Step>
+</Steps>
+
+## Understanding the Requests List
+
+The main reservations page shows comprehensive information:
+
+### Table Columns
+
+<ResponseField name="ID" type="integer">
+  Unique identifier for the reservation. Used for tracking and referencing specific requests.
+</ResponseField>
+
+<ResponseField name="Evento" type="string">
+  The event name provided by the user. Describes the purpose of the reservation.
+</ResponseField>
+
+<ResponseField name="Sala" type="string">
+  The room name being requested. Each reservation is for a single room.
+</ResponseField>
+
+<ResponseField name="Solicitante" type="string">
+  Username of the person who submitted the request. Useful for follow-up communication.
+</ResponseField>
+
+<ResponseField name="Estado" type="enum">
+  Current status of the request:
+  - **Pendiente**: Awaiting review
+  - **Aprobado**: Approved and confirmed
+  - **Rechazado**: Rejected by administrator
+</ResponseField>
+
+<ResponseField name="Fecha" type="datetime">
+  When the request was submitted (created_at timestamp).
+</ResponseField>
+
+<ResponseField name="Acciones" type="actions">
+  Available actions based on status:
+  - **Pendiente**: "Revisar" link to detail page
+  - **Aprobado/Rechazado**: Shows current status (no actions)
+</ResponseField>
+
+## Filtering Requests by Status
+
+Efficiently manage requests by filtering:
+
+<Tabs>
+  <Tab title="All Requests">
+    **URL**: `/reservations`
+    
+    Shows every reservation regardless of status. Use this for:
+    - Overall system overview
+    - Historical reporting
+    - Checking all reservations for a specific room
+    
+    ```php
+    $reservations = $reservationModel->getAll();
+    ```
+  </Tab>
+  
+  <Tab title="Pending Only">
+    **URL**: `/reservations?status=pendiente`
+    
+    Shows only requests awaiting review. This is your primary work queue:
+    - Focus on what needs attention
+    - Prioritize urgent requests
+    - Process in chronological order
+    
+    ```php
+    $reservations = $reservationModel->getByStatus('pendiente');
+    ```
+  </Tab>
+  
+  <Tab title="Approved">
+    **URL**: `/reservations?status=aprobado`
+    
+    Shows confirmed reservations. Useful for:
+    - Checking room schedules
+    - Verifying what's already booked
+    - Identifying potential conflicts
+  </Tab>
+  
+  <Tab title="Rejected">
+    **URL**: `/reservations?status=rechazado`
+    
+    Shows declined requests. Helpful for:
+    - Reviewing past decisions
+    - Identifying patterns in rejections
+    - Following up with frequent rejecters
+  </Tab>
+</Tabs>
+
+### Filter Implementation
+
+The filtering logic in `app/controllers/ReservationController.php:122`:
+
+```php
+public function index(): void
+{
+    Auth::requireRole('admin');
+
+    $reservationModel = new Reservation();
+    $status = $_GET['status'] ?? null;
+
+    if ($status) {
+        $reservations = $reservationModel->getByStatus($status);
+    } else {
+        $reservations = $reservationModel->getAll();
+    }
+
+    require_once dirname(__DIR__) . '/views/reservations/index.php';
+}
+```
+
+<Tip>
+Bookmark the pending filter URL for quick access to your daily work queue.
+</Tip>
+
+## Reviewing Individual Requests
+
+For detailed examination of a reservation:
+
+<Steps>
+  <Step title="Access Request Details">
+    From the reservations list, click "Revisar" (Review) on any pending request. This navigates to `/reservations/show?id={reservationId}`.
+  </Step>
+  
+  <Step title="Review Complete Information">
+    The detail page shows all aspects of the reservation:
+    - Event name and description
+    - Room being requested
+    - Requester information
+    - Current status
+    - Creation date
+    - All requested time slots
+    - Selected materials
+    - Additional notes from requester
+  </Step>
+  
+  <Step title="Verify Availability">
+    Check that the requested time slots don't conflict with existing approved reservations.
+  </Step>
+  
+  <Step title="Assess Resources">
+    Confirm that requested materials are available and appropriate.
+  </Step>
+  
+  <Step title="Make Decision">
+    Based on your review, decide to approve or reject.
+  </Step>
+</Steps>
+
+### Detail Page Data Retrieval
+
+The show method (`app/controllers/ReservationController.php:264`) gathers all related data:
+
+```php
+public function show(): void{
+    Auth::requireRole('admin');
+
+    $id = $_GET['id'] ?? null;
+
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud no válida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    $reservationModel = new Reservation();
+
+    $reservation = $reservationModel->findById((int)$id);
+    $slots = $reservationModel->getSlots((int)$id);
+    $materials = $reservationModel->getMaterials((int)$id);
+
+    if (!$reservation) {
+        Session::setFlash('error', 'Solicitud no encontrada.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    require_once dirname(__DIR__) . '/views/reservations/show.php';
+}
+```
+
+<Info>
+The system fetches the main reservation record plus all associated slots and materials in separate queries for complete context.
+</Info>
+
+## Approving Requests
+
+To approve a pending reservation:
+
+<Steps>
+  <Step title="Verify Eligibility">
+    Before approving, confirm:
+    - ✓ No scheduling conflicts exist
+    - ✓ Room is appropriate for event
+    - ✓ Requested materials are available
+    - ✓ Time slots are reasonable
+    - ✓ Request follows organizational policies
+  </Step>
+  
+  <Step title="Click Approve Button">
+    On the detail page, click "Aprobar" (Approve). This button only appears for pending requests:
+    
+    ```php
+    <?php if ($reservation['status'] === 'pendiente'): ?>
+        <form method="POST" action="<?= BASE_URL ?>/reservations/approve">
+            <input type="hidden" name="id" value="<?= $reservation['id'] ?>">
+            <button class="approve">Aprobar</button>
+        </form>
+    <?php endif; ?>
+    ```
+  </Step>
+  
+  <Step title="Confirmation">
+    The system processes your approval and displays a success message.
+  </Step>
+  
+  <Step title="Return to List">
+    You're redirected back to the reservations list. The approved request now shows "Aprobado" status.
+  </Step>
+</Steps>
+
+### Approval Implementation
+
+The approve method in `app/controllers/ReservationController.php:176`:
+
+```php
+public function approve(): void {
+    Auth::requireRole('admin');
+
+    // Validate POST request
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    // Get reservation ID
+    $id = $_POST['id'] ?? null;
+
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud inválida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    // Update status to approved
+    $reservationModel = new Reservation();
+    $reservationModel->updateStatus((int)$id, 'aprobado');
+
+    // Provide feedback
+    Session::setFlash('success', 'Solicitud aprobada correctamente.');
+
+    // Redirect to list
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+### What Happens on Approval
+
+1. **Database Update**: Reservation status changes from `pendiente` to `aprobado`
+2. **Time Slot Lock**: Those time slots are now considered occupied for conflict checking
+3. **Material Reservation**: Selected materials are implicitly reserved for those times
+4. **User Notification**: User can see approval when they check "Mis solicitudes"
+
+<Note>
+Approval is permanent in the current implementation. Reversing an approval requires direct database access.
+</Note>
+
+## Rejecting Requests
+
+To reject a reservation that cannot be accommodated:
+
+<Steps>
+  <Step title="Identify Rejection Reason">
+    Common reasons for rejection:
+    - Scheduling conflict with existing reservation
+    - Room inappropriate for event type
+    - Requested materials unavailable
+    - Policy violations
+    - Insufficient advance notice
+    - Room under maintenance
+  </Step>
+  
+  <Step title="Click Reject Button">
+    On the detail page, click "Rechazar" (Reject):
+    
+    ```php
+    <?php if ($reservation['status'] === 'pendiente'): ?>
+        <form method="POST" action="<?= BASE_URL ?>/reservations/reject">
+            <input type="hidden" name="id" value="<?= $reservation['id'] ?>">
+            <button class="reject">Rechazar</button>
+        </form>
+    <?php endif; ?>
+    ```
+  </Step>
+  
+  <Step title="Consider Communication">
+    The system doesn't store rejection reasons. Consider contacting the user externally to explain the decision and offer alternatives.
+  </Step>
+  
+  <Step title="Confirmation">
+    You'll see "Solicitud rechazada" and be returned to the reservations list.
+  </Step>
+</Steps>
+
+### Rejection Implementation
+
+The reject method in `app/controllers/ReservationController.php:208`:
+
+```php
+public function reject(): void
+{
+    Auth::requireRole('admin');
+
+    // Validate POST request
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    // Get reservation ID
+    $id = $_POST['id'] ?? null;
+
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud inválida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+
+    // Update status to rejected
+    $reservationModel = new Reservation();
+    $reservationModel->updateStatus((int)$id, 'rechazado');
+
+    // Provide feedback
+    Session::setFlash('success', 'Solicitud rechazada.');
+
+    // Redirect to list
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+<Warning>
+Rejected reservations cannot be re-reviewed in the current system. Users must submit a new request with updated information.
+</Warning>
+
+## Decision-Making Framework
+
+Use this framework to evaluate requests consistently:
+
+### Approval Criteria
+
+<AccordionGroup>
+  <Accordion title="Availability Check">
+    **Question**: Are the requested date/time slots available?
+    
+    - Check existing approved reservations for the same room
+    - Verify no conflicts exist in the database
+    - Consider setup/teardown time between events
+    
+    **Action**: If conflicts exist, reject and suggest alternative times.
+  </Accordion>
+  
+  <Accordion title="Resource Assessment">
+    **Question**: Are requested materials available?
+    
+    - Verify materials exist and are functional
+    - Check if materials are already committed elsewhere
+    - Assess if material requests are appropriate for event
+    
+    **Action**: If materials unavailable, contact user to modify request.
+  </Accordion>
+  
+  <Accordion title="Room Appropriateness">
+    **Question**: Is the room suitable for this event?
+    
+    - Room capacity vs. expected attendance (check notes)
+    - Room features match event needs
+    - Room location appropriate for event type
+    
+    **Action**: If room is inappropriate, suggest better alternatives.
+  </Accordion>
+  
+  <Accordion title="Policy Compliance">
+    **Question**: Does the request comply with organizational policies?
+    
+    - Advance notice requirements met
+    - User authorized to book this room type
+    - Event type permitted in this space
+    - Duration within allowed limits
+    
+    **Action**: If policy violations exist, reject with explanation.
+  </Accordion>
+  
+  <Accordion title="Information Completeness">
+    **Question**: Is there enough information to make a decision?
+    
+    - Event name is descriptive
+    - Time slots are clear
+    - Special requirements understood
+    
+    **Action**: If unclear, contact user for clarification before deciding.
+  </Accordion>
+</AccordionGroup>
+
+## Workflow Strategies
+
+### Daily Review Process
+
+Establish a routine for managing requests:
+
+<Steps>
+  <Step title="Morning Review">
+    Start each day by checking pending requests:
+    ```
+    /reservations?status=pendiente
+    ```
+    This shows your work queue for the day.
+  </Step>
+  
+  <Step title="Prioritize by Date">
+    Sort requests by event date. Process urgent requests (happening soon) first.
+  </Step>
+  
+  <Step title="Batch Process by Room">
+    Group requests for the same room to efficiently check for conflicts.
+  </Step>
+  
+  <Step title="Make Decisions">
+    Review each request thoroughly and approve or reject.
+  </Step>
+  
+  <Step title="Follow Up">
+    For rejections or special cases, contact users externally with explanations.
+  </Step>
+  
+  <Step title="Verify Queue Empty">
+    End the day by confirming all pending requests have been processed.
+  </Step>
+</Steps>
+
+### Conflict Resolution
+
+When multiple requests compete for the same resource:
+
+1. **First Come, First Served**: Generally approve based on submission timestamp
+2. **Priority Events**: Some organizational events may take precedence
+3. **Duration Consideration**: Shorter requests may be easier to accommodate
+4. **Alternative Solutions**: Suggest different rooms or times to later requesters
+
+<Tip>
+When rejecting due to conflicts, include information about which time slots are available in your follow-up communication.
+</Tip>
+
+## Common Scenarios
+
+### Scenario 1: Clear Approval
+
+**Situation**: Request for Conference Room A on 2026-03-20 from 10:00-12:00. No conflicts, materials available, clear event description.
+
+**Action**: 
+<Steps>
+  <Step>Review detail page</Step>
+  <Step>Verify no conflicts in system</Step>
+  <Step>Click "Aprobar"</Step>
+  <Step>Done - move to next request</Step>
+</Steps>
+
+### Scenario 2: Scheduling Conflict
+
+**Situation**: Request for Room B on 2026-03-25 from 14:00-16:00. Existing approved reservation for 13:00-15:00.
+
+**Action**:
+<Steps>
+  <Step>Identify the conflict</Step>
+  <Step>Click "Rechazar"</Step>
+  <Step>Contact user externally: "Your request conflicts with existing reservation. Room available 15:00-17:00 instead. Would that work?"</Step>
+  <Step>If user agrees, ask them to submit new request</Step>
+</Steps>
+
+### Scenario 3: Material Unavailable
+
+**Situation**: Request includes video conferencing equipment that's committed to another event.
+
+**Action**:
+<Steps>
+  <Step>Note the material conflict</Step>
+  <Step>Contact user: "Room and time available, but video conferencing system is already booked. Can you proceed without it or choose different date?"</Step>
+  <Step>If user modifies request, have them submit new one</Step>
+  <Step>Reject original request</Step>
+</Steps>
+
+### Scenario 4: Insufficient Information
+
+**Situation**: Event name is vague ("Meeting"), no notes, unclear purpose.
+
+**Action**:
+<Steps>
+  <Step>Contact user for clarification</Step>
+  <Step>Ask about: purpose, expected attendees, specific needs</Step>
+  <Step>Once clarified, make approval decision</Step>
+  <Step>Consider establishing policy requiring detailed event descriptions</Step>
+</Steps>
+
+## Security and Validation
+
+### Role Verification
+
+Every management action includes role checking:
+
+```php
+Auth::requireRole('admin');
+```
+
+This prevents unauthorized users from approving or rejecting requests even if they obtain direct URLs.
+
+### POST Method Enforcement
+
+State-changing operations require POST requests:
+
+```php
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+This provides protection against CSRF attacks and accidental actions from link clicks.
+
+### ID Validation
+
+Reservation IDs are validated before processing:
+
+```php
+$id = $_POST['id'] ?? null;
+
+if (!$id) {
+    Session::setFlash('error', 'Solicitud inválida.');
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+<Info>
+The system performs defensive validation at multiple levels to ensure data integrity and prevent manipulation.
+</Info>
+
+## Troubleshooting
+
+### Cannot Access Reservations Page
+
+**Problem**: 403 Forbidden error when accessing `/reservations`
+
+**Solution**: 
+- Verify your user account has `role = 'admin'` in database
+- Check that you're logged in with admin account
+- Contact system administrator to verify role assignment
+
+### Approve/Reject Not Working
+
+**Problem**: Clicking buttons doesn't change status
+
+**Diagnosis**:
+```php
+// Check form is submitting correctly
+// Verify POST data includes reservation ID
+// Confirm no JavaScript errors in console
+```
+
+**Solution**:
+- Check browser console for errors
+- Verify session hasn't expired
+- Try refreshing page and clicking again
+- Check database to confirm status isn't already changed
+
+### Missing Reservations
+
+**Problem**: Expected requests don't appear in list
+
+**Solution**:
+- Remove status filter (view `/reservations` without parameters)
+- Check if requests were created by different users
+- Verify requests exist in database
+- Check date range if time-based filtering is implemented
+
+### Action Buttons Not Visible
+
+**Problem**: "Aprobar" and "Rechazar" buttons don't appear
+
+**Cause**: Buttons only show for pending requests:
+
+```php
+<?php if ($reservation['status'] === 'pendiente'): ?>
+    <!-- Buttons rendered here -->
+<?php endif; ?>
+```
+
+**Solution**: Verify the reservation status is actually `pendiente`. Already approved or rejected requests don't show action buttons.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Timely Response" icon="clock">
+    Process pending requests within 24-48 hours to provide good user experience.
+  </Card>
+  
+  <Card title="Clear Communication" icon="comment">
+    For rejections, contact users externally to explain decisions and offer alternatives.
+  </Card>
+  
+  <Card title="Consistent Criteria" icon="scale-balanced">
+    Apply the same evaluation standards to all requests for fairness.
+  </Card>
+  
+  <Card title="Documentation" icon="file-lines">
+    Keep external records of approval decisions for organizational auditing.
+  </Card>
+</CardGroup>
+
+## System Limitations
+
+<Warning>
+Be aware of current system constraints:
+
+- **No Rejection Reasons**: System doesn't store why requests were rejected
+- **Permanent Decisions**: Status changes can't be undone without database access
+- **No User Notifications**: Users must manually check status changes
+- **No Audit Trail**: No record of which admin approved/rejected
+- **No Bulk Actions**: Must process requests individually
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Admin Role Overview" icon="user-shield" href="/guides/admin-role">
+    Complete guide to administrator capabilities
+  </Card>
+  
+  <Card title="Creating Reservations" icon="calendar-plus" href="/guides/creating-reservations">
+    Understand the user submission process
+  </Card>
+</CardGroup>

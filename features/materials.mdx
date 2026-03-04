@@ -1,0 +1,457 @@
+---
+title: Material Management
+description: Material assignment system with room-specific validation for reservations
+---
+
+Apartado de Salas includes a comprehensive material management system that allows users to request equipment and resources when making room reservations. Materials are associated with specific rooms and validated during the booking process.
+
+## Material Architecture
+
+The material system consists of three database tables:
+
+1. **materials**: The catalog of all available materials
+2. **room_materials**: Association between materials and rooms (with quantities)
+3. **reservation_materials**: Materials assigned to specific reservations
+
+<Info>
+  Materials can only be requested if they are available for the specific room being reserved.
+</Info>
+
+## Material Model
+
+The `Material` model provides methods for retrieving and validating materials:
+
+### Getting All Materials
+
+```php
+// From app/models/Material.php:18-25
+public function getAll(): array
+{
+    $sql = "SELECT id, name, description 
+            FROM materials 
+            ORDER BY name";
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+This method returns the complete catalog of materials, useful for administrative views.
+
+### Getting Materials by Room
+
+```php
+// From app/models/Material.php:30-49
+public function getByRoom(int $roomId): array
+{
+    $sql = "SELECT 
+                m.id,
+                m.name,
+                m.description,
+                rm.quantity
+            FROM room_materials rm
+            JOIN materials m ON m.id = rm.material_id
+            WHERE rm.room_id = :room_id
+            ORDER BY m.name";
+    
+    $stmt->bindParam(':room_id', $roomId, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+<Note>
+  This method is crucial for displaying available materials in the reservation form based on the selected room.
+</Note>
+
+## Material Validation
+
+The system implements backend validation to ensure users only request materials available for their selected room.
+
+### Checking Material Availability
+
+<Accordion title="existsInRoom()">
+  ```php
+  // From app/models/Material.php:55-71
+  public function existsInRoom(int $materialId, int $roomId): bool
+  {
+      $sql = "SELECT 1
+              FROM room_materials
+              WHERE material_id = :material_id
+                AND room_id = :room_id
+              LIMIT 1";
+      
+      $stmt->bindParam(':material_id', $materialId, PDO::PARAM_INT);
+      $stmt->bindParam(':room_id', $roomId, PDO::PARAM_INT);
+      $stmt->execute();
+      
+      return (bool) $stmt->fetchColumn();
+  }
+  ```
+  
+  **Returns:** `true` if the material is available for the room, `false` otherwise.
+</Accordion>
+
+### Validating Multiple Materials
+
+The `validateForRoom()` method checks that all requested materials belong to the selected room:
+
+```php
+// From app/models/Material.php:76-102
+public function validateForRoom(array $materialIds, int $roomId): bool
+{
+    // Empty array is valid
+    if(empty($materialIds)) {
+        return true;
+    }
+    
+    // Normalize IDs: unique integers only
+    $materialIds = array_unique(
+        array_filter(
+            array_map('intval', $materialIds),
+            fn($id) => $id > 0
+        )
+    );
+    
+    if(empty($materialIds)) {
+        return true;
+    }
+    
+    // Check each material
+    foreach ($materialIds as $materialId) {
+        if (!$this->existsInRoom((int)$materialId, $roomId)) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+```
+
+<Steps>
+  <Step title="Handle empty input">
+    If no materials are requested, validation passes (materials are optional).
+  </Step>
+  
+  <Step title="Normalize material IDs">
+    - Convert to integers
+    - Remove duplicates
+    - Filter out invalid values (≤ 0)
+  </Step>
+  
+  <Step title="Validate each material">
+    Check that each material exists in the room's material list.
+  </Step>
+  
+  <Step title="Return result">
+    Returns `false` if any material is invalid for the room.
+  </Step>
+</Steps>
+
+## Material Assignment to Reservations
+
+When a reservation is created, materials are attached through the `attachMaterials()` method:
+
+```php
+// From app/models/Reservation.php:125-153
+public function attachMaterials(int $reservationId, array $materialIds): void
+{
+    // 1. Delete any previous assignments
+    $this->db->prepare(
+        "DELETE FROM reservation_materials 
+         WHERE reservation_id = :id"
+    )->execute([':id' => $reservationId]);
+    
+    // 2. Normalize material IDs
+    $materialIds = array_unique(
+        array_filter(
+            array_map('intval', $materialIds),
+            fn($id) => $id > 0
+        )
+    );
+    
+    // 3. Insert each material
+    $stmt = $this->db->prepare(
+        "INSERT INTO reservation_materials 
+         (reservation_id, material_id)
+         VALUES (:reservation_id, :material_id)"
+    );
+    
+    foreach ($materialIds as $materialId) {
+        $stmt->execute([
+            ':reservation_id' => $reservationId,
+            ':material_id'    => $materialId
+        ]);
+    }
+}
+```
+
+<Warning>
+  Always call `validateForRoom()` before `attachMaterials()` to ensure materials are valid:
+  
+  ```php
+  // From app/controllers/ReservationController.php:94-98
+  if (!$materialModel->validateForRoom($materials, (int)$roomId)) {
+      throw new Exception('Materiales no válidos para la sala.');
+  }
+  
+  $reservationModel->attachMaterials($reservationId, $materials);
+  ```
+</Warning>
+
+## Retrieving Reservation Materials
+
+To get materials assigned to a reservation:
+
+```php
+// From app/models/Reservation.php:159-174
+public function getMaterials(int $reservationId): array
+{
+    $sql = "SELECT m.id, m.name
+            FROM reservation_materials rm
+            JOIN materials m ON m.id = rm.material_id
+            WHERE rm.reservation_id = :reservation_id
+            ORDER BY m.name";
+    
+    $stmt->bindParam(':reservation_id', $reservationId, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+**Returns:** Array of materials with `id` and `name` fields.
+
+<Tabs>
+  <Tab title="Usage in Controller">
+    ```php
+    // From app/controllers/ReservationController.php:279
+    $materials = $reservationModel->getMaterials((int)$id);
+    ```
+  </Tab>
+  
+  <Tab title="Example Output">
+    ```php
+    [
+        ['id' => 1, 'name' => 'Proyector'],
+        ['id' => 3, 'name' => 'Micrófono'],
+        ['id' => 5, 'name' => 'Pizarra']
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+## Room-Material Association
+
+Materials are linked to rooms through the `room_materials` table, which includes quantity information:
+
+```sql
+CREATE TABLE room_materials (
+    room_id INT,
+    material_id INT,
+    quantity INT,
+    PRIMARY KEY (room_id, material_id)
+)
+```
+
+The `Room` model provides a method to retrieve materials for a specific room:
+
+```php
+// From app/models/Room.php:45-63
+public function getMaterials(int $roomId): array
+{
+    $sql = "SELECT 
+                m.id,
+                m.name,
+                rm.quantity
+            FROM room_materials rm
+            JOIN materials m ON m.id = rm.material_id
+            WHERE rm.room_id = :room_id
+            ORDER BY m.name";
+    
+    $stmt->bindParam(':room_id', $roomId, PDO::PARAM_INT);
+    $stmt->execute();
+    
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+```
+
+<Info>
+  This method is functionally equivalent to `Material::getByRoom()` but accessed through the Room model.
+</Info>
+
+## Material Request Workflow
+
+The complete workflow for requesting materials in a reservation:
+
+<Steps>
+  <Step title="User selects room">
+    User chooses a room from the reservation form.
+  </Step>
+  
+  <Step title="Load available materials">
+    The form dynamically loads materials available for that room:
+    
+    ```php
+    $materialModel = new Material();
+    $availableMaterials = $materialModel->getByRoom($roomId);
+    ```
+  </Step>
+  
+  <Step title="User selects materials">
+    User checks off desired materials (checkboxes or multi-select).
+  </Step>
+  
+  <Step title="Form submission">
+    Materials are submitted as an array:
+    
+    ```php
+    // From app/controllers/ReservationController.php:43-44
+    $materials = $_POST['materials'] ?? [];
+    $materials = array_map('intval', $materials);
+    ```
+  </Step>
+  
+  <Step title="Backend validation">
+    Server validates that all materials are valid for the room:
+    
+    ```php
+    if (!$materialModel->validateForRoom($materials, (int)$roomId)) {
+        throw new Exception('Materiales no válidos.');
+    }
+    ```
+  </Step>
+  
+  <Step title="Material assignment">
+    Materials are saved to the database:
+    
+    ```php
+    $reservationModel->attachMaterials($reservationId, $materials);
+    ```
+  </Step>
+</Steps>
+
+## Security Considerations
+
+<Warning>
+  **Never trust client-side validation alone.** Always validate materials on the server:
+  
+  ```php
+  // Bad: Trusting frontend
+  $reservationModel->attachMaterials($reservationId, $_POST['materials']);
+  
+  // Good: Backend validation
+  if (!$materialModel->validateForRoom($materials, $roomId)) {
+      throw new Exception('Invalid materials');
+  }
+  $reservationModel->attachMaterials($reservationId, $materials);
+  ```
+</Warning>
+
+The system implements multiple security layers:
+
+1. **Input normalization**: IDs are converted to integers and deduplicated
+2. **Backend validation**: `validateForRoom()` ensures materials belong to the room
+3. **Database constraints**: Foreign keys prevent invalid material/room associations
+
+## Material Data Structure
+
+### Material Catalog Entry
+
+```php
+[
+    'id' => 1,
+    'name' => 'Proyector HD',
+    'description' => 'Proyector 1080p con cable HDMI'
+]
+```
+
+### Material with Room Association
+
+```php
+[
+    'id' => 1,
+    'name' => 'Proyector HD',
+    'description' => 'Proyector 1080p con cable HDMI',
+    'quantity' => 2  // Available in this room
+]
+```
+
+### Reservation Material Assignment
+
+```php
+// In reservation_materials table
+[
+    'reservation_id' => 15,
+    'material_id' => 1
+]
+```
+
+## Common Material Queries
+
+<Tabs>
+  <Tab title="All Materials">
+    ```php
+    $materialModel = new Material();
+    $allMaterials = $materialModel->getAll();
+    ```
+    
+    Use for: Admin material catalog management
+  </Tab>
+  
+  <Tab title="Room Materials">
+    ```php
+    $materialModel = new Material();
+    $roomMaterials = $materialModel->getByRoom($roomId);
+    ```
+    
+    Use for: Displaying available materials in reservation form
+  </Tab>
+  
+  <Tab title="Reservation Materials">
+    ```php
+    $reservationModel = new Reservation();
+    $assignedMaterials = $reservationModel->getMaterials($reservationId);
+    ```
+    
+    Use for: Displaying materials in reservation details
+  </Tab>
+</Tabs>
+
+## Material Assignment Transaction
+
+Material assignment is part of the reservation creation transaction:
+
+```php
+// From app/controllers/ReservationController.php:64-117
+try {
+    $db = Database::getConnection();
+    $db->beginTransaction();
+    
+    // 1. Create reservation
+    $reservationId = $reservationModel->create(/* ... */);
+    
+    // 2. Create time slots
+    foreach ($dates as $index => $date) {
+        $slotModel->create($reservationId, $date, $start, $end);
+    }
+    
+    // 3. Validate and attach materials
+    if (!$materialModel->validateForRoom($materials, (int)$roomId)) {
+        throw new Exception('Materiales no válidos.');
+    }
+    $reservationModel->attachMaterials($reservationId, $materials);
+    
+    // 4. Commit
+    $db->commit();
+    
+} catch (Exception $e) {
+    if(isset($db) && $db->inTransaction()) {
+        $db->rollBack();  // Rolls back materials too
+    }
+}
+```
+
+<Note>
+  If material validation or assignment fails, the entire reservation is rolled back, ensuring data consistency.
+</Note>

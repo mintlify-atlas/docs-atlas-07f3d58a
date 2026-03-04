@@ -1,0 +1,213 @@
+---
+title: "AuthController"
+description: "Authentication controller handling user login, logout, and session management"
+---
+
+## Overview
+
+The `AuthController` manages user authentication and session control for the Apartado de Salas system. It provides methods for displaying the login form, processing authentication, and handling user logout.
+
+**Location:** `app/controllers/AuthController.php`
+
+---
+
+## Methods
+
+### showLogin()
+
+Displays the login form. If a user session is already active, redirects to the dashboard.
+
+<ParamField path="return" type="void">
+  Renders the login view or redirects to dashboard
+</ParamField>
+
+**Route Mapping:**
+```php
+GET /login -> AuthController::showLogin()
+GET / -> AuthController::showLogin()
+```
+
+**Method Signature:**
+```php
+public function showLogin(): void
+```
+
+**Implementation Details:**
+```php
+if (Session::isActive()) {
+    header('Location: ' . BASE_URL . '/dashboard');
+    exit;
+}
+
+require_once dirname(__DIR__) . '/views/auth/login.php';
+```
+
+<Note>
+  This method checks for an active session before rendering the login page to prevent authenticated users from accessing the login form.
+</Note>
+
+---
+
+### login()
+
+Processes user authentication from the login form POST request.
+
+<ParamField path="username" type="string" required>
+  Username from POST data (`$_POST['username']`)
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  Password from POST data (`$_POST['password']`)
+</ParamField>
+
+<ParamField path="return" type="void">
+  Redirects to dashboard on success, or back to login with error message
+</ParamField>
+
+**Route Mapping:**
+```php
+POST /login -> AuthController::login()
+```
+
+**Method Signature:**
+```php
+public function login(): void
+```
+
+**Implementation Flow:**
+
+<Tabs>
+  <Tab title="Validation">
+    ```php
+    // Verify POST request
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+
+    // Get credentials
+    $user = $_POST['username'] ?? '';
+    $pass = $_POST['password'] ?? '';
+
+    // Validate required fields
+    if (empty($user) || empty($pass)) {
+        Session::setFlash('error', 'Todos los campos son obligatorios.');
+        header('Location: login');
+        exit;
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Authentication">
+    ```php
+    // Authenticate user
+    $userModel = new User();
+    $authResult = $userModel->authenticate($user, $pass);
+
+    if (!$authResult) {
+        Session::setFlash('error', 'Usuario o contraseña incorrectos.');
+        session_write_close();
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Success">
+    ```php
+    // Create session
+    Session::create($authResult);
+
+    // Redirect to dashboard
+    header('Location: ' . BASE_URL . '/dashboard');
+    exit;
+    ```
+  </Tab>
+</Tabs>
+
+**Error Messages:**
+- `"Todos los campos son obligatorios."` - When username or password is empty
+- `"Usuario o contraseña incorrectos."` - When authentication fails
+
+**Success Behavior:**
+- Creates user session via `Session::create()`
+- Redirects to `/dashboard`
+
+---
+
+### logout()
+
+Destroys the current user session and redirects to the login page.
+
+<ParamField path="return" type="void">
+  Destroys session and redirects to login
+</ParamField>
+
+**Route Mapping:**
+```php
+GET /logout -> AuthController::logout()
+```
+
+**Method Signature:**
+```php
+public function logout(): void
+```
+
+**Implementation Details:**
+```php
+// Start session if not already active
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Destroy session properly
+session_unset();
+session_destroy();
+
+// Regenerate ID for security
+session_regenerate_id(true);
+
+// Redirect to login
+header('Location: ' . BASE_URL . '/login');
+exit;
+```
+
+<Note>
+  The logout method regenerates the session ID for security purposes to prevent session fixation attacks.
+</Note>
+
+---
+
+## Dependencies
+
+```php
+require_once dirname(__DIR__) . '/models/user.php';
+require_once dirname(__DIR__) . '/Helpers/Session.php';
+```
+
+**Required Classes:**
+- `User` - Model for user authentication
+- `Session` - Helper for session management
+
+---
+
+## Usage Example
+
+**Login Flow:**
+
+```php
+// User accesses /login
+// AuthController::showLogin() is called
+// Login form is displayed
+
+// User submits credentials
+// POST request to /login
+// AuthController::login() processes authentication
+// On success: redirect to /dashboard
+// On failure: redirect back to /login with error message
+
+// User clicks logout
+// GET request to /logout
+// AuthController::logout() destroys session
+// Redirect to /login
+```

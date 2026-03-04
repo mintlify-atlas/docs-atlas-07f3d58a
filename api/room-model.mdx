@@ -1,0 +1,420 @@
+---
+title: 'Room Model'
+description: 'API reference for the Room model class that manages room records and their associated materials'
+---
+
+# Room Model
+
+The `Room` model manages room records in the system. It provides methods to retrieve room information and associated materials.
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the Room model and establishes a PDO database connection.
+
+## Methods
+
+### getAll()
+
+Retrieves all rooms in the system.
+
+```php
+public function getAll(): array
+```
+
+**Returns:** `array` - Array of associative arrays containing room data, ordered alphabetically by name
+
+<ResponseField name="id" type="int">
+  Room ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Room name
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT id, name 
+FROM rooms 
+ORDER BY name
+```
+
+**Example:**
+```php
+$room = new Room();
+$allRooms = $room->getAll();
+
+echo "Available rooms:\n";
+foreach ($allRooms as $r) {
+    echo "[{$r['id']}] {$r['name']}\n";
+}
+
+// Output:
+// Available rooms:
+// [1] Sala de Conferencias
+// [2] Sala de Juntas
+// [3] Auditorio Principal
+```
+
+**Use Case - Room Selection Dropdown:**
+```php
+$room = new Room();
+$rooms = $room->getAll();
+
+echo '<select name="room_id">';
+echo '<option value="">-- Select a room --</option>';
+foreach ($rooms as $r) {
+    echo "<option value='{$r['id']}'>{$r['name']}</option>";
+}
+echo '</select>';
+```
+
+---
+
+### findById()
+
+Retrieves a specific room by its ID.
+
+```php
+public function findById(int $id): ?array
+```
+
+<ParamField path="id" type="int" required>
+  The ID of the room to retrieve
+</ParamField>
+
+**Returns:** `?array` - Associative array with room data, or `null` if not found
+
+<ResponseField name="id" type="int">
+  Room ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Room name
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT id, name 
+FROM rooms 
+WHERE id = :id 
+LIMIT 1
+```
+
+**Example:**
+```php
+$room = new Room();
+$roomData = $room->findById(3);
+
+if ($roomData) {
+    echo "Room found: {$roomData['name']}";
+} else {
+    echo "Room not found";
+}
+```
+
+**Validation Example:**
+```php
+$room = new Room();
+$requestedRoomId = $_POST['room_id'];
+
+// Verify room exists before creating reservation
+$roomData = $room->findById($requestedRoomId);
+if (!$roomData) {
+    http_response_code(404);
+    echo json_encode(['error' => 'Room not found']);
+    exit;
+}
+
+// Proceed with reservation
+echo "Creating reservation for: {$roomData['name']}";
+```
+
+---
+
+### getMaterials()
+
+Retrieves all materials available for a specific room, including quantity information.
+
+```php
+public function getMaterials(int $roomId): array
+```
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room
+</ParamField>
+
+**Returns:** `array` - Array of associative arrays containing material data, ordered alphabetically by material name
+
+<ResponseField name="id" type="int">
+  Material ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Material name
+</ResponseField>
+
+<ResponseField name="quantity" type="int">
+  Quantity available in this room
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT 
+    m.id,
+    m.name,
+    rm.quantity
+FROM room_materials rm
+JOIN materials m ON m.id = rm.material_id
+WHERE rm.room_id = :room_id
+ORDER BY m.name
+```
+
+<Note>
+  This method returns the same information as `Material::getByRoom()`, but without the description field. Use whichever is more convenient for your use case.
+</Note>
+
+**Example:**
+```php
+$room = new Room();
+$materials = $room->getMaterials(3);
+
+echo "Materials available in this room:\n";
+foreach ($materials as $m) {
+    echo "- {$m['name']}: {$m['quantity']} available\n";
+}
+
+// Output:
+// Materials available in this room:
+// - Micrófono inalámbrico: 4 available
+// - Pantalla: 1 available
+// - Proyector: 1 available
+```
+
+**Dynamic Form Generation:**
+```php
+$room = new Room();
+$roomId = $_GET['room_id'];
+$materials = $room->getMaterials($roomId);
+
+if (empty($materials)) {
+    echo "<p>No materials available for this room</p>";
+} else {
+    echo "<h3>Select Materials</h3>";
+    foreach ($materials as $m) {
+        echo "<label>";
+        echo "<input type='checkbox' name='materials[]' value='{$m['id']}'>";
+        echo "{$m['name']} ({$m['quantity']} available)";
+        echo "</label><br>";
+    }
+}
+```
+
+**AJAX Endpoint:**
+```php
+// API endpoint: /api/rooms/{id}/materials
+$room = new Room();
+$roomId = (int)$_GET['id'];
+
+// Verify room exists
+$roomData = $room->findById($roomId);
+if (!$roomData) {
+    http_response_code(404);
+    echo json_encode(['error' => 'Room not found']);
+    exit;
+}
+
+// Get materials
+$materials = $room->getMaterials($roomId);
+
+header('Content-Type: application/json');
+echo json_encode([
+    'room' => $roomData,
+    'materials' => $materials
+]);
+```
+
+## Database Schema
+
+The Room model interacts with the following database tables:
+
+- **rooms** - Main room records
+  - `id` - Primary key
+  - `name` - Room name
+
+- **room_materials** - Junction table linking rooms to materials
+  - `room_id` - Foreign key to rooms table
+  - `material_id` - Foreign key to materials table
+  - `quantity` - Quantity available in the room
+
+- **materials** - Material catalog
+  - `id` - Primary key
+  - `name` - Material name
+  - `description` - Material description
+
+## Complete Workflow Example
+
+### Building a Reservation Form
+
+Here's a complete example of building a room reservation form:
+
+```php
+<?php
+require_once 'app/models/Room.php';
+
+$room = new Room();
+$rooms = $room->getAll();
+?>
+
+<form id="reservation-form">
+    <!-- Step 1: Select Room -->
+    <label>Select Room:</label>
+    <select name="room_id" id="room-select" required>
+        <option value="">-- Choose a room --</option>
+        <?php foreach ($rooms as $r): ?>
+            <option value="<?= $r['id'] ?>"><?= htmlspecialchars($r['name']) ?></option>
+        <?php endforeach; ?>
+    </select>
+
+    <!-- Step 2: Materials (loaded dynamically) -->
+    <div id="materials-container" style="display: none;">
+        <h3>Available Materials</h3>
+        <div id="materials-list"></div>
+    </div>
+
+    <button type="submit">Create Reservation</button>
+</form>
+
+<script>
+document.getElementById('room-select').addEventListener('change', function() {
+    const roomId = this.value;
+    
+    if (!roomId) {
+        document.getElementById('materials-container').style.display = 'none';
+        return;
+    }
+
+    // Load materials for selected room
+    fetch(`/api/rooms/${roomId}/materials`)
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('materials-list');
+            container.innerHTML = '';
+
+            if (data.materials.length === 0) {
+                container.innerHTML = '<p>No materials available</p>';
+            } else {
+                data.materials.forEach(material => {
+                    const label = document.createElement('label');
+                    label.innerHTML = `
+                        <input type="checkbox" name="materials[]" value="${material.id}">
+                        ${material.name} (${material.quantity} available)
+                    `;
+                    container.appendChild(label);
+                    container.appendChild(document.createElement('br'));
+                });
+            }
+
+            document.getElementById('materials-container').style.display = 'block';
+        })
+        .catch(error => {
+            console.error('Error loading materials:', error);
+        });
+});
+</script>
+```
+
+### API Endpoint Implementation
+
+```php
+<?php
+// File: /api/rooms/{id}/materials
+require_once '../app/models/Room.php';
+
+header('Content-Type: application/json');
+
+// Get room ID from URL
+$roomId = (int)($_GET['id'] ?? 0);
+
+if ($roomId <= 0) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid room ID']);
+    exit;
+}
+
+$room = new Room();
+
+// Verify room exists
+$roomData = $room->findById($roomId);
+if (!$roomData) {
+    http_response_code(404);
+    echo json_encode(['error' => 'Room not found']);
+    exit;
+}
+
+// Get materials
+$materials = $room->getMaterials($roomId);
+
+echo json_encode([
+    'success' => true,
+    'room' => $roomData,
+    'materials' => $materials
+]);
+```
+
+## Best Practices
+
+### Validate Room Existence
+
+Always verify a room exists before performing operations:
+
+```php
+$room = new Room();
+$roomId = $_POST['room_id'];
+
+if (!$room->findById($roomId)) {
+    throw new Exception('Invalid room ID');
+}
+```
+
+### Cache Room List
+
+If room data doesn't change frequently, consider caching:
+
+```php
+$cacheKey = 'rooms_list';
+$rooms = cache_get($cacheKey);
+
+if ($rooms === null) {
+    $room = new Room();
+    $rooms = $room->getAll();
+    cache_set($cacheKey, $rooms, 3600); // Cache for 1 hour
+}
+```
+
+### Combine with Other Models
+
+Rooms are often used with other models:
+
+```php
+$room = new Room();
+$reservation = new Reservation();
+$slot = new ReservationSlot();
+
+// Get room details
+$roomData = $room->findById($roomId);
+
+// Check availability
+$occupied = $slot->getOccupiedSlots($roomId, $date);
+
+// Get materials
+$materials = $room->getMaterials($roomId);
+
+// Display complete information
+echo "Room: {$roomData['name']}\n";
+echo "Available materials: " . count($materials) . "\n";
+echo "Occupied slots today: " . count($occupied) . "\n";
+```

@@ -1,0 +1,385 @@
+---
+title: 'Material Model'
+description: 'API reference for the Material model class that manages materials catalog and room-material associations'
+---
+
+# Material Model
+
+The `Material` model manages the materials catalog and validates material availability for specific rooms. It ensures that only materials associated with a room can be requested for reservations.
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the Material model and establishes a PDO database connection.
+
+## Methods
+
+### getAll()
+
+Retrieves all materials from the catalog. Useful for administration purposes.
+
+```php
+public function getAll(): array
+```
+
+**Returns:** `array` - Array of associative arrays containing all materials, ordered alphabetically by name
+
+<ResponseField name="id" type="int">
+  Material ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Material name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Material description
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT id, name, description 
+FROM materials 
+ORDER BY name
+```
+
+**Example:**
+```php
+$material = new Material();
+$allMaterials = $material->getAll();
+
+foreach ($allMaterials as $m) {
+    echo "[{$m['id']}] {$m['name']}: {$m['description']}\n";
+}
+
+// Output:
+// [1] Micrófono inalámbrico: Para eventos y conferencias
+// [2] Proyector: Proyector Full HD
+// [3] Pantalla: Pantalla de proyección retráctil
+```
+
+---
+
+### getByRoom()
+
+Retrieves all materials available for a specific room, including quantity information.
+
+```php
+public function getByRoom(int $roomId): array
+```
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room
+</ParamField>
+
+**Returns:** `array` - Array of materials associated with the room, ordered alphabetically by name
+
+<ResponseField name="id" type="int">
+  Material ID
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Material name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Material description
+</ResponseField>
+
+<ResponseField name="quantity" type="int">
+  Quantity available in this specific room
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT 
+    m.id,
+    m.name,
+    m.description,
+    rm.quantity
+FROM room_materials rm
+JOIN materials m ON m.id = rm.material_id
+WHERE rm.room_id = :room_id
+ORDER BY m.name
+```
+
+**Example:**
+```php
+$material = new Material();
+$roomMaterials = $material->getByRoom(3);
+
+echo "Materials available in this room:\n";
+foreach ($roomMaterials as $m) {
+    echo "- {$m['name']} (Qty: {$m['quantity']})\n";
+    echo "  {$m['description']}\n";
+}
+
+// Output:
+// Materials available in this room:
+// - Micrófono inalámbrico (Qty: 4)
+//   Para eventos y conferencias
+// - Proyector (Qty: 1)
+//   Proyector Full HD
+```
+
+---
+
+### existsInRoom()
+
+Verifies if a specific material is available in a specific room. Used for backend security validation.
+
+```php
+public function existsInRoom(int $materialId, int $roomId): bool
+```
+
+<ParamField path="materialId" type="int" required>
+  The ID of the material to check
+</ParamField>
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room to check
+</ParamField>
+
+**Returns:** `bool` - `true` if the material exists in the room, `false` otherwise
+
+**SQL Query:**
+```sql
+SELECT 1
+FROM room_materials
+WHERE material_id = :material_id
+  AND room_id = :room_id
+LIMIT 1
+```
+
+<Note>
+  This method is used for backend security validation. Never trust frontend-submitted material IDs without validating they belong to the requested room.
+</Note>
+
+**Example:**
+```php
+$material = new Material();
+
+// Check if Material #5 is available in Room #3
+if ($material->existsInRoom(5, 3)) {
+    echo "Material is available in this room";
+} else {
+    echo "Material is NOT available in this room";
+}
+```
+
+**Security Use Case:**
+```php
+// User submits a reservation request with material IDs
+$requestedMaterials = $_POST['materials']; // [2, 5, 8]
+$roomId = $_POST['room_id']; // 3
+
+$material = new Material();
+
+// Validate each material belongs to the room
+foreach ($requestedMaterials as $matId) {
+    if (!$material->existsInRoom($matId, $roomId)) {
+        http_response_code(400);
+        echo json_encode([
+            'error' => 'Invalid material ID for this room',
+            'material_id' => $matId
+        ]);
+        exit;
+    }
+}
+
+// All materials are valid, proceed with reservation...
+```
+
+---
+
+### validateForRoom()
+
+Validates that all materials in an array belong to a specific room. Convenient for batch validation.
+
+```php
+public function validateForRoom(array $materialIds, int $roomId): bool
+```
+
+<ParamField path="materialIds" type="array" required>
+  Array of material IDs to validate
+</ParamField>
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room to validate against
+</ParamField>
+
+**Returns:** `bool` - `true` if all materials are valid for the room, `false` if any material is invalid
+
+<Note>
+  This method:
+  1. Returns `true` for empty arrays (no materials requested is valid)
+  2. Normalizes input: filters out invalid values, converts to integers, removes duplicates
+  3. Validates each material ID using `existsInRoom()`
+</Note>
+
+**Example:**
+```php
+$material = new Material();
+
+// Validate multiple materials at once
+$requestedMaterials = [2, 5, 8, 10];
+$roomId = 3;
+
+if ($material->validateForRoom($requestedMaterials, $roomId)) {
+    echo "All materials are valid for this room";
+} else {
+    echo "One or more materials are not available in this room";
+}
+```
+
+**Input Normalization:**
+
+The method automatically handles various input formats:
+
+```php
+$material = new Material();
+
+// These inputs are normalized:
+$material->validateForRoom([1, 2, 3], 5);           // Valid integers
+$material->validateForRoom(['1', '2', '3'], 5);     // String numbers → converted to int
+$material->validateForRoom([1, 2, 2, 3], 5);        // Duplicates → removed
+$material->validateForRoom([1, 0, -5, 3], 5);       // Invalid IDs → filtered out
+$material->validateForRoom([], 5);                  // Empty → returns true
+```
+
+**Complete Validation Flow:**
+```php
+$material = new Material();
+
+// Example: Processing a reservation form submission
+$roomId = $_POST['room_id'];
+$materialIds = $_POST['material_ids']; // Can be null or empty
+
+// Ensure we have an array
+if (!is_array($materialIds)) {
+    $materialIds = [];
+}
+
+// Validate materials
+if (!$material->validateForRoom($materialIds, $roomId)) {
+    http_response_code(400);
+    echo json_encode([
+        'error' => 'One or more selected materials are not available for this room',
+        'room_id' => $roomId,
+        'invalid_materials' => $materialIds
+    ]);
+    exit;
+}
+
+// Materials are valid, proceed with creating reservation
+echo "All validations passed";
+```
+
+**Comparison: existsInRoom() vs validateForRoom()**
+
+```php
+// Use existsInRoom() when:
+// - Checking a single material
+// - Need to identify WHICH material is invalid
+
+$material = new Material();
+foreach ($materialIds as $matId) {
+    if (!$material->existsInRoom($matId, $roomId)) {
+        echo "Invalid material: {$matId}";
+        break;
+    }
+}
+
+// Use validateForRoom() when:
+// - Checking multiple materials
+// - Only need to know if ALL are valid (boolean result)
+// - Want automatic input normalization
+
+if (!$material->validateForRoom($materialIds, $roomId)) {
+    echo "Validation failed";
+}
+```
+
+## Database Schema
+
+The Material model interacts with the following database tables:
+
+- **materials** - Material catalog
+  - `id` - Primary key
+  - `name` - Material name
+  - `description` - Material description
+
+- **room_materials** - Junction table linking rooms to materials
+  - `room_id` - Foreign key to rooms table
+  - `material_id` - Foreign key to materials table
+  - `quantity` - Quantity available in the room
+
+## Best Practices
+
+### Always Validate Materials
+
+Never trust frontend submissions. Always validate materials server-side:
+
+```php
+// BAD: Trusting user input
+$reservation->attachMaterials($reservationId, $_POST['materials']);
+
+// GOOD: Validating first
+$material = new Material();
+if ($material->validateForRoom($_POST['materials'], $roomId)) {
+    $reservation->attachMaterials($reservationId, $_POST['materials']);
+} else {
+    throw new Exception('Invalid materials for this room');
+}
+```
+
+### Handle Empty Material Lists
+
+Not all reservations require materials:
+
+```php
+$materialIds = $_POST['materials'] ?? [];
+
+// validateForRoom() returns true for empty arrays
+if ($material->validateForRoom($materialIds, $roomId)) {
+    if (!empty($materialIds)) {
+        $reservation->attachMaterials($reservationId, $materialIds);
+    }
+}
+```
+
+### Display Materials to Users
+
+When building forms, only show materials available for the selected room:
+
+```php
+$material = new Material();
+$roomId = 3;
+$availableMaterials = $material->getByRoom($roomId);
+
+// Generate checkboxes for each material
+foreach ($availableMaterials as $m) {
+    echo "<label>";
+    echo "<input type='checkbox' name='materials[]' value='{$m['id']}'>";
+    echo "{$m['name']} (Available: {$m['quantity']})";
+    echo "</label>";
+}
+```
+
+### Inventory Management
+
+Use quantity information for inventory tracking:
+
+```php
+$material = new Material();
+$roomMaterials = $material->getByRoom($roomId);
+
+foreach ($roomMaterials as $m) {
+    if ($m['quantity'] < 2) {
+        echo "⚠️ Low stock: {$m['name']} (Only {$m['quantity']} available)\n";
+    }
+}
+```

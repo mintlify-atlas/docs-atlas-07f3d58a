@@ -1,0 +1,543 @@
+---
+title: 'Session'
+description: 'Session management helper class for user sessions and flash messages'
+---
+
+## Overview
+
+The `Session` helper class provides static methods for managing PHP sessions, user authentication state, and temporary flash messages. It ensures sessions are properly initialized and provides a clean API for session operations.
+
+**Location**: `app/Helpers/Session.php`
+
+<Note>
+  Session is a **static helper class** - all methods are called statically without instantiation.
+</Note>
+
+## Key Features
+
+- Safe session initialization
+- User session creation and destruction
+- Session state verification
+- Flash messages for temporary user feedback
+- Automatic flash message cleanup after retrieval
+
+## Public Methods
+
+### start()
+
+Initializes the PHP session if not already started.
+
+```php
+public static function start(): void
+```
+
+This method checks if a session is already active before calling `session_start()`, preventing "headers already sent" errors.
+
+**Example**:
+
+```php
+// Safe to call multiple times
+Session::start();
+Session::start(); // Won't cause an error
+```
+
+**Source**: `app/Helpers/Session.php:8-13`
+
+<Note>
+  Most Session methods call `start()` internally, so you rarely need to call it directly.
+</Note>
+
+### create()
+
+Creates a user session with the provided user data.
+
+```php
+public static function create(array $userData): void
+```
+
+<ParamField path="userData" type="array" required>
+  Associative array containing user information (typically from database after authentication)
+</ParamField>
+
+**User Data Structure**:
+```php
+[
+    'id'       => 1,
+    'username' => 'admin',
+    'email'    => 'admin@example.com',
+    'role'     => 'admin',
+    'name'     => 'Administrator'
+]
+```
+
+**Example**:
+
+```php
+// After successful authentication
+$userModel = new User();
+$user = $userModel->authenticate($username, $password);
+
+if ($user) {
+    Session::create($user);
+    header('Location: ' . BASE_URL . '/dashboard');
+    exit;
+}
+```
+
+**Source**: `app/Helpers/Session.php:18-22`
+
+### isActive()
+
+Checks if a user session is currently active.
+
+```php
+public static function isActive(): bool
+```
+
+**Returns**: `bool` - `true` if user is logged in, `false` otherwise
+
+**Example**:
+
+```php
+if (Session::isActive()) {
+    echo 'User is logged in';
+} else {
+    echo 'No active session';
+}
+
+// Often used with Auth helper
+if (Session::isActive()) {
+    header('Location: ' . BASE_URL . '/dashboard');
+} else {
+    header('Location: ' . BASE_URL . '/login');
+}
+```
+
+**Source**: `app/Helpers/Session.php:27-31`
+
+### destroy()
+
+Completely destroys the user session.
+
+```php
+public static function destroy(): void
+```
+
+This method:
+- Starts the session if needed
+- Unsets all session variables
+- Destroys the session
+
+**Example**:
+
+```php
+// Logout functionality
+public function logout(): void
+{
+    Session::destroy();
+    
+    header('Location: ' . BASE_URL . '/login');
+    exit;
+}
+```
+
+**Source**: `app/Helpers/Session.php:36-41`
+
+### setFlash()
+
+Stores a temporary flash message in the session.
+
+```php
+public static function setFlash(string $key, string $message): void
+```
+
+<ParamField path="key" type="string" required>
+  Flash message identifier (commonly `success`, `error`, `warning`, `info`)
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  The message content to display to the user
+</ParamField>
+
+**Example**:
+
+```php
+// Success message
+Session::setFlash('success', 'Reservation created successfully!');
+
+// Error message
+Session::setFlash('error', 'Invalid username or password.');
+
+// Warning message
+Session::setFlash('warning', 'This room is almost fully booked.');
+
+// Info message
+Session::setFlash('info', 'Your reservation is pending approval.');
+```
+
+**Source**: `app/Helpers/Session.php:46-50`
+
+### getFlash()
+
+Retrieves and deletes a flash message from the session.
+
+```php
+public static function getFlash(string $key): ?string
+```
+
+<ParamField path="key" type="string" required>
+  Flash message identifier to retrieve
+</ParamField>
+
+**Returns**: `?string` - The flash message, or `null` if not found
+
+<Note>
+  Flash messages are **automatically deleted** after retrieval, ensuring they only display once.
+</Note>
+
+**Example**:
+
+```php
+// In a view file
+<?php if ($error = Session::getFlash('error')): ?>
+    <div class="alert alert-danger">
+        <?= htmlspecialchars($error) ?>
+    </div>
+<?php endif; ?>
+
+<?php if ($success = Session::getFlash('success')): ?>
+    <div class="alert alert-success">
+        <?= htmlspecialchars($success) ?>
+    </div>
+<?php endif; ?>
+```
+
+**Source**: `app/Helpers/Session.php:55-67`
+
+## Real-World Usage Examples
+
+### User Authentication Flow
+
+From `AuthController::login()`:
+
+```php
+public function login(): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+    
+    $user = $_POST['username'] ?? '';
+    $pass = $_POST['password'] ?? '';
+    
+    // Validation
+    if (empty($user) || empty($pass)) {
+        Session::setFlash('error', 'Todos los campos son obligatorios.');
+        header('Location: login');
+        exit;
+    }
+    
+    // Authenticate
+    $userModel = new User();
+    $authResult = $userModel->authenticate($user, $pass);
+    
+    if (!$authResult) {
+        Session::setFlash('error', 'Usuario o contraseña incorrectos.');
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+    
+    // Create session
+    Session::create($authResult);
+    
+    header('Location: ' . BASE_URL . '/dashboard');
+    exit;
+}
+```
+
+**Source**: `app/controllers/AuthController.php:19-51`
+
+### Logout Flow
+
+From `AuthController::logout()`:
+
+```php
+public function logout(): void
+{
+    // If no session, just redirect
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    
+    // Destroy session properly
+    session_unset();
+    session_destroy();
+    
+    // Regenerate ID for security
+    session_regenerate_id(true);
+    
+    // Redirect to login
+    header('Location: ' . BASE_URL . '/login');
+    exit;
+}
+```
+
+**Source**: `app/controllers/AuthController.php:53-70`
+
+<Note>
+  The `logout()` method in AuthController uses native PHP session functions instead of `Session::destroy()`. Consider refactoring to use the helper for consistency.
+</Note>
+
+### Redirect If Already Authenticated
+
+From `AuthController::showLogin()`:
+
+```php
+public function showLogin(): void
+{
+    // If already logged in, go to dashboard
+    if (Session::isActive()) {
+        header('Location: ' . BASE_URL . '/dashboard');
+        exit;
+    }
+    
+    require_once dirname(__DIR__) . '/views/auth/login.php';
+}
+```
+
+**Source**: `app/controllers/AuthController.php:8-16`
+
+### Flash Messages in Form Processing
+
+From `ReservationController::store()`:
+
+```php
+public function store(): void
+{
+    Auth::requireLogin();
+    
+    // Get form data
+    $userId   = $_SESSION['user']['id'] ?? null;
+    $roomId   = $_POST['room_id'] ?? null;
+    $event    = trim($_POST['event_name'] ?? '');
+    
+    // Validation
+    if (!$userId || !$roomId || empty($event)) {
+        Session::setFlash('error', 'Datos incompletos.');
+        header('Location: ' . BASE_URL . '/reservations/create');
+        exit;
+    }
+    
+    if (count($dates) === 0) {
+        Session::setFlash('error', 'Debe agregar al menos un horario.');
+        header('Location: ' . BASE_URL . '/reservations/create');
+        exit;
+    }
+    
+    try {
+        $db = Database::getConnection();
+        $db->beginTransaction();
+        
+        // Create reservation and slots...
+        
+        $db->commit();
+        
+        Session::setFlash('success', 'La reservación fue creada correctamente.');
+        header('Location: ' . BASE_URL . '/dashboard');
+        exit;
+        
+    } catch (Exception $e) {
+        if (isset($db) && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        
+        Session::setFlash('error', $e->getMessage());
+        header('Location: ' . BASE_URL . '/reservations/create');
+        exit;
+    }
+}
+```
+
+**Source**: `app/controllers/ReservationController.php:25-118`
+
+### Approval/Rejection Feedback
+
+From `ReservationController`:
+
+```php
+public function approve(): void
+{
+    Auth::requireRole('admin');
+    
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $id = $_POST['id'] ?? null;
+    
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud inválida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $reservationModel = new Reservation();
+    $reservationModel->updateStatus((int)$id, 'aprobado');
+    
+    Session::setFlash('success', 'Solicitud aprobada correctamente.');
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+
+public function reject(): void
+{
+    Auth::requireRole('admin');
+    
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $id = $_POST['id'] ?? null;
+    
+    if (!$id) {
+        Session::setFlash('error', 'Solicitud inválida.');
+        header('Location: ' . BASE_URL . '/reservations');
+        exit;
+    }
+    
+    $reservationModel = new Reservation();
+    $reservationModel->updateStatus((int)$id, 'rechazado');
+    
+    Session::setFlash('success', 'Solicitud rechazada.');
+    header('Location: ' . BASE_URL . '/reservations');
+    exit;
+}
+```
+
+**Source**: `app/controllers/ReservationController.php:176-237`
+
+## Flash Message Display Pattern
+
+Common pattern in views for displaying flash messages:
+
+```php
+<!-- In view header or layout file -->
+<?php
+$error = Session::getFlash('error');
+$success = Session::getFlash('success');
+$warning = Session::getFlash('warning');
+$info = Session::getFlash('info');
+?>
+
+<?php if ($error): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <?= htmlspecialchars($error) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
+<?php if ($success): ?>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <?= htmlspecialchars($success) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
+<?php if ($warning): ?>
+    <div class="alert alert-warning alert-dismissible fade show" role="alert">
+        <?= htmlspecialchars($warning) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
+<?php if ($info): ?>
+    <div class="alert alert-info alert-dismissible fade show" role="alert">
+        <?= htmlspecialchars($info) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+```
+
+## Implementation Details
+
+### Session Initialization Check
+
+```php
+public static function start(): void
+{
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+}
+```
+
+**Source**: `app/Helpers/Session.php:8-13`
+
+This prevents the "headers already sent" error by checking if a session is already active.
+
+### Flash Message Storage
+
+Flash messages are stored in a dedicated `flash` array within `$_SESSION`:
+
+```php
+public static function setFlash(string $key, string $message): void
+{
+    self::start();
+    $_SESSION['flash'][$key] = $message;
+}
+```
+
+**Source**: `app/Helpers/Session.php:46-50`
+
+### Auto-Deletion of Flash Messages
+
+```php
+public static function getFlash(string $key): ?string
+{
+    self::start();
+    
+    if (!isset($_SESSION['flash'][$key])) {
+        return null;
+    }
+    
+    $message = $_SESSION['flash'][$key];
+    unset($_SESSION['flash'][$key]);  // Delete after reading
+    
+    return $message;
+}
+```
+
+**Source**: `app/Helpers/Session.php:55-67`
+
+## Session Security
+
+<Note>
+  Consider implementing these security enhancements:
+  - Call `session_regenerate_id()` after login to prevent session fixation
+  - Set secure session cookie parameters in `php.ini` or via `session_set_cookie_params()`
+  - Implement session timeout for inactive users
+</Note>
+
+**Enhanced logout example**:
+
+```php
+public function logout(): void
+{
+    Session::destroy();
+    
+    // Regenerate session ID for security
+    session_regenerate_id(true);
+    
+    header('Location: ' . BASE_URL . '/login');
+    exit;
+}
+```
+
+## See Also
+
+- [Auth Helper](/api/auth-helper) - For authentication and authorization
+- [Router Class](/api/router) - For request routing
+- [User Model](/api/user-model) - For user data management

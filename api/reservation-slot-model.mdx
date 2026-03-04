@@ -1,0 +1,354 @@
+---
+title: 'ReservationSlot Model'
+description: 'API reference for the ReservationSlot model class that manages time slots for room reservations'
+---
+
+# ReservationSlot Model
+
+The `ReservationSlot` model manages time slots (bloques de horario) for room reservations. It handles the creation of time slots, conflict detection, and availability checking to ensure rooms are not double-booked.
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the ReservationSlot model and establishes a PDO database connection.
+
+## Methods
+
+### create()
+
+Creates a new time slot for a reservation.
+
+```php
+public function create(
+    int $reservationId,
+    string $date,
+    string $startTime,
+    string $endTime
+): bool
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation this slot belongs to
+</ParamField>
+
+<ParamField path="date" type="string" required>
+  Date for the time slot in YYYY-MM-DD format
+</ParamField>
+
+<ParamField path="startTime" type="string" required>
+  Start time in HH:MM:SS format
+</ParamField>
+
+<ParamField path="endTime" type="string" required>
+  End time in HH:MM:SS format
+</ParamField>
+
+**Returns:** `bool` - `true` if the slot was created successfully
+
+**SQL Query:**
+```sql
+INSERT INTO reservation_slots (reservation_id, date, start_time, end_time)
+VALUES (:reservation_id, :date, :start_time, :end_time)
+```
+
+<Note>
+  This method does not automatically check for conflicts. Use `hasConflict()` before creating a slot to ensure the room is available.
+</Note>
+
+**Example:**
+```php
+$slot = new ReservationSlot();
+
+// Create a time slot for December 15, 2024 from 9:00 AM to 11:00 AM
+$success = $slot->create(
+    reservationId: 15,
+    date: '2024-12-15',
+    startTime: '09:00:00',
+    endTime: '11:00:00'
+);
+
+if ($success) {
+    echo "Time slot created successfully";
+}
+```
+
+---
+
+### getByReservation()
+
+Retrieves all time slots associated with a specific reservation.
+
+```php
+public function getByReservation(int $reservationId): array
+```
+
+<ParamField path="reservationId" type="int" required>
+  The ID of the reservation
+</ParamField>
+
+**Returns:** `array` - Array of associative arrays containing slot data, ordered by date and start time
+
+<ResponseField name="date" type="string">
+  Date of the time slot (YYYY-MM-DD)
+</ResponseField>
+
+<ResponseField name="start_time" type="string">
+  Start time of the slot (HH:MM:SS)
+</ResponseField>
+
+<ResponseField name="end_time" type="string">
+  End time of the slot (HH:MM:SS)
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT date, start_time, end_time
+FROM reservation_slots
+WHERE reservation_id = :reservation_id
+ORDER BY date, start_time
+```
+
+**Example:**
+```php
+$slot = new ReservationSlot();
+$slots = $slot->getByReservation(15);
+
+foreach ($slots as $s) {
+    echo "Date: {$s['date']}\n";
+    echo "Time: {$s['start_time']} - {$s['end_time']}\n";
+    echo "---\n";
+}
+```
+
+---
+
+### hasConflict()
+
+Checks if there is a scheduling conflict for a room at a specific date and time.
+
+```php
+public function hasConflict(
+    int $roomId,
+    string $date,
+    string $startTime,
+    string $endTime
+): bool
+```
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room to check
+</ParamField>
+
+<ParamField path="date" type="string" required>
+  Date to check in YYYY-MM-DD format
+</ParamField>
+
+<ParamField path="startTime" type="string" required>
+  Proposed start time in HH:MM:SS format
+</ParamField>
+
+<ParamField path="endTime" type="string" required>
+  Proposed end time in HH:MM:SS format
+</ParamField>
+
+**Returns:** `bool` - `true` if there is a conflict (room is already booked), `false` if available
+
+**SQL Query:**
+```sql
+SELECT 1
+FROM reservation_slots rs
+JOIN reservations r ON r.id = rs.reservation_id
+WHERE r.room_id = :room_id
+  AND rs.date = :date
+  AND (rs.start_time < :end_time AND rs.end_time > :start_time)
+LIMIT 1
+```
+
+<Note>
+  The conflict detection uses an overlap formula: `(rs.start_time < :end_time AND rs.end_time > :start_time)` to determine if two time ranges overlap.
+</Note>
+
+**Example:**
+```php
+$slot = new ReservationSlot();
+
+// Check if Room 3 is available on Dec 15 from 9:00 AM to 11:00 AM
+$hasConflict = $slot->hasConflict(
+    roomId: 3,
+    date: '2024-12-15',
+    startTime: '09:00:00',
+    endTime: '11:00:00'
+);
+
+if ($hasConflict) {
+    echo "Room is not available during this time";
+} else {
+    echo "Room is available";
+}
+```
+
+**Conflict Detection Logic:**
+
+Two time slots conflict if they overlap. The overlap occurs when:
+- The new slot starts before an existing slot ends, AND
+- The new slot ends after an existing slot starts
+
+Examples:
+```php
+// Existing slot: 09:00 - 11:00
+// New slot: 10:00 - 12:00 → CONFLICT (overlaps)
+// New slot: 11:00 - 13:00 → NO CONFLICT (starts exactly when existing ends)
+// New slot: 08:00 - 09:00 → NO CONFLICT (ends exactly when existing starts)
+// New slot: 14:00 - 16:00 → NO CONFLICT (completely separate)
+```
+
+---
+
+### getOccupiedSlots()
+
+Retrieves all occupied time slots for a specific room on a given date. Useful for displaying availability.
+
+```php
+public function getOccupiedSlots(int $roomId, string $date): array
+```
+
+<ParamField path="roomId" type="int" required>
+  The ID of the room
+</ParamField>
+
+<ParamField path="date" type="string" required>
+  Date to check in YYYY-MM-DD format
+</ParamField>
+
+**Returns:** `array` - Array of occupied time slots, ordered by start time
+
+<ResponseField name="start_time" type="string">
+  Start time of the occupied slot (HH:MM:SS)
+</ResponseField>
+
+<ResponseField name="end_time" type="string">
+  End time of the occupied slot (HH:MM:SS)
+</ResponseField>
+
+**SQL Query:**
+```sql
+SELECT rs.start_time, rs.end_time
+FROM reservation_slots rs
+JOIN reservations r ON r.id = rs.reservation_id
+WHERE r.room_id = :room_id
+  AND rs.date = :date
+ORDER BY rs.start_time
+```
+
+**Example:**
+```php
+$slot = new ReservationSlot();
+$occupied = $slot->getOccupiedSlots(
+    roomId: 3,
+    date: '2024-12-15'
+);
+
+echo "Occupied time slots for Room 3 on December 15:\n";
+foreach ($occupied as $o) {
+    echo "- {$o['start_time']} to {$o['end_time']}\n";
+}
+
+// Output:
+// Occupied time slots for Room 3 on December 15:
+// - 09:00:00 to 11:00:00
+// - 14:00:00 to 16:00:00
+// - 18:00:00 to 20:00:00
+```
+
+**Use Case - Display Available Times:**
+```php
+$slot = new ReservationSlot();
+$occupied = $slot->getOccupiedSlots(3, '2024-12-15');
+
+// Define business hours
+$businessStart = '08:00:00';
+$businessEnd = '22:00:00';
+
+// Calculate available slots by finding gaps between occupied slots
+echo "Available times:\n";
+$lastEnd = $businessStart;
+
+foreach ($occupied as $o) {
+    if ($lastEnd < $o['start_time']) {
+        echo "- {$lastEnd} to {$o['start_time']}\n";
+    }
+    $lastEnd = $o['end_time'];
+}
+
+// Check if there's time after the last reservation
+if ($lastEnd < $businessEnd) {
+    echo "- {$lastEnd} to {$businessEnd}\n";
+}
+```
+
+## Database Schema
+
+The ReservationSlot model interacts with the following database tables:
+
+- **reservation_slots** - Main time slot records
+  - `id` - Primary key
+  - `reservation_id` - Foreign key to reservations table
+  - `date` - Date of the slot (DATE)
+  - `start_time` - Start time (TIME)
+  - `end_time` - End time (TIME)
+
+- **reservations** - Parent reservation records
+  - Used to join with rooms table for conflict detection
+
+## Best Practices
+
+### Always Check for Conflicts
+
+Before creating a new time slot, always check for conflicts:
+
+```php
+$slot = new ReservationSlot();
+
+if ($slot->hasConflict($roomId, $date, $startTime, $endTime)) {
+    throw new Exception('Time slot conflict detected');
+}
+
+$slot->create($reservationId, $date, $startTime, $endTime);
+```
+
+### Validate Time Ranges
+
+Ensure end time is after start time before creating slots:
+
+```php
+if (strtotime($endTime) <= strtotime($startTime)) {
+    throw new Exception('End time must be after start time');
+}
+```
+
+### Handle Multiple Slots
+
+When creating reservations with multiple time slots, validate all slots for conflicts first:
+
+```php
+$slot = new ReservationSlot();
+$slotsToCreate = [
+    ['date' => '2024-12-15', 'start' => '09:00:00', 'end' => '11:00:00'],
+    ['date' => '2024-12-15', 'start' => '14:00:00', 'end' => '16:00:00'],
+];
+
+// First, check all for conflicts
+foreach ($slotsToCreate as $s) {
+    if ($slot->hasConflict($roomId, $s['date'], $s['start'], $s['end'])) {
+        throw new Exception("Conflict on {$s['date']} at {$s['start']}");
+    }
+}
+
+// If no conflicts, create all slots
+foreach ($slotsToCreate as $s) {
+    $slot->create($reservationId, $s['date'], $s['start'], $s['end']);
+}
+```

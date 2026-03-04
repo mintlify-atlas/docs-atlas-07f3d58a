@@ -1,0 +1,424 @@
+---
+title: 'User Model'
+description: 'API reference for the User model class that handles user authentication'
+---
+
+# User Model
+
+The `User` model handles user authentication in the system. It verifies credentials and returns user information for session management.
+
+## Constructor
+
+```php
+public function __construct()
+```
+
+Initializes the User model. Unlike other models, this one establishes database connections per-method rather than storing a connection in a property.
+
+## Methods
+
+### authenticate()
+
+Authenticates a user by username and password using secure password verification.
+
+```php
+public function authenticate(string $username, string $password): array|false
+```
+
+<ParamField path="username" type="string" required>
+  The username to authenticate
+</ParamField>
+
+<ParamField path="password" type="string" required>
+  The plain-text password to verify
+</ParamField>
+
+**Returns:** `array|false` - User data array if authentication succeeds, `false` if credentials are invalid
+
+<ResponseField name="id" type="int">
+  User ID
+</ResponseField>
+
+<ResponseField name="username" type="string">
+  Username
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  User email address
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  User role (e.g., 'admin', 'solicitante', 'comunicacion')
+</ResponseField>
+
+<Note>
+  The password hash is **never** returned in the result array for security reasons. It is explicitly removed before returning user data.
+</Note>
+
+**SQL Query:**
+```sql
+SELECT id, username, email, password, role
+FROM users
+WHERE username = :username
+LIMIT 1
+```
+
+**Security Features:**
+
+1. **Password Hashing:** Uses PHP's `password_verify()` function to securely compare passwords against bcrypt hashes
+2. **Password Excluded:** The password hash is removed from the returned data
+3. **Timing-Safe:** Returns `false` for both "user not found" and "incorrect password" to prevent username enumeration
+
+**Example:**
+```php
+$user = new User();
+
+$username = $_POST['username'];
+$password = $_POST['password'];
+
+$userData = $user->authenticate($username, $password);
+
+if ($userData) {
+    // Authentication successful
+    $_SESSION['user_id'] = $userData['id'];
+    $_SESSION['username'] = $userData['username'];
+    $_SESSION['role'] = $userData['role'];
+    
+    echo "Welcome, {$userData['username']}!";
+    header('Location: /dashboard');
+} else {
+    // Authentication failed
+    echo "Invalid username or password";
+}
+```
+
+**Complete Login Implementation:**
+```php
+<?php
+session_start();
+require_once 'app/models/user.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'] ?? '';
+    $password = $_POST['password'] ?? '';
+
+    // Validate input
+    if (empty($username) || empty($password)) {
+        $error = 'Username and password are required';
+    } else {
+        $user = new User();
+        $userData = $user->authenticate($username, $password);
+
+        if ($userData) {
+            // Store user data in session
+            $_SESSION['user_id'] = $userData['id'];
+            $_SESSION['username'] = $userData['username'];
+            $_SESSION['email'] = $userData['email'];
+            $_SESSION['role'] = $userData['role'];
+            $_SESSION['logged_in'] = true;
+
+            // Redirect based on role
+            switch ($userData['role']) {
+                case 'admin':
+                case 'comunicacion':
+                    header('Location: /admin/dashboard');
+                    break;
+                case 'solicitante':
+                    header('Location: /reservations/my-reservations');
+                    break;
+                default:
+                    header('Location: /dashboard');
+            }
+            exit;
+        } else {
+            $error = 'Invalid username or password';
+            
+            // Optional: Log failed login attempt
+            error_log("Failed login attempt for username: {$username}");
+        }
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login</title>
+</head>
+<body>
+    <h1>Login</h1>
+    
+    <?php if (isset($error)): ?>
+        <div class="error"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
+    
+    <form method="POST">
+        <label>
+            Username:
+            <input type="text" name="username" required>
+        </label>
+        <br>
+        <label>
+            Password:
+            <input type="password" name="password" required>
+        </label>
+        <br>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>
+```
+
+**API Endpoint Example:**
+```php
+<?php
+// File: /api/auth/login
+session_start();
+require_once '../app/models/user.php';
+
+header('Content-Type: application/json');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['error' => 'Method not allowed']);
+    exit;
+}
+
+// Get JSON input
+$input = json_decode(file_get_contents('php://input'), true);
+$username = $input['username'] ?? '';
+$password = $input['password'] ?? '';
+
+if (empty($username) || empty($password)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Username and password are required']);
+    exit;
+}
+
+$user = new User();
+$userData = $user->authenticate($username, $password);
+
+if ($userData) {
+    // Store in session
+    $_SESSION['user_id'] = $userData['id'];
+    $_SESSION['username'] = $userData['username'];
+    $_SESSION['role'] = $userData['role'];
+    $_SESSION['logged_in'] = true;
+
+    echo json_encode([
+        'success' => true,
+        'user' => $userData
+    ]);
+} else {
+    http_response_code(401);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Invalid credentials'
+    ]);
+}
+```
+
+## Database Schema
+
+The User model interacts with the **users** table:
+
+- `id` - Primary key (INT)
+- `username` - Unique username (VARCHAR)
+- `email` - User email address (VARCHAR)
+- `password` - Bcrypt password hash (VARCHAR)
+- `role` - User role (VARCHAR)
+  - `solicitante` - Regular user who can create reservations
+  - `comunicacion` - Comunicación y Difusión staff who can approve/reject
+  - `admin` - System administrator
+
+## User Roles
+
+The system supports different user roles with varying permissions:
+
+### solicitante
+Regular users who can:
+- Create reservation requests
+- View their own reservations
+- Edit pending reservations
+
+### comunicacion
+Comunicación y Difusión staff who can:
+- View all reservations
+- Approve or reject reservation requests
+- Manage room schedules
+
+### admin
+System administrators who can:
+- Full system access
+- Manage users
+- Manage rooms and materials
+- Override any restrictions
+
+**Role-Based Access Control Example:**
+```php
+session_start();
+
+function requireAuth() {
+    if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
+        header('Location: /login');
+        exit;
+    }
+}
+
+function requireRole($allowedRoles) {
+    requireAuth();
+    
+    if (!in_array($_SESSION['role'], $allowedRoles)) {
+        http_response_code(403);
+        echo "Access denied. Required role: " . implode(' or ', $allowedRoles);
+        exit;
+    }
+}
+
+// Usage:
+requireRole(['comunicacion', 'admin']); // Only comunicacion or admin can access
+```
+
+## Security Best Practices
+
+### Password Storage
+
+Never store plain-text passwords. Always use password hashing:
+
+```php
+// Creating a new user (registration)
+$hashedPassword = password_hash($plainPassword, PASSWORD_DEFAULT);
+
+$sql = "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)";
+$stmt = $db->prepare($sql);
+$stmt->execute([$username, $email, $hashedPassword, 'solicitante']);
+```
+
+### Session Security
+
+Implement secure session management:
+
+```php
+session_start();
+
+// Regenerate session ID after login
+if ($userData) {
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $userData['id'];
+    $_SESSION['username'] = $userData['username'];
+    $_SESSION['role'] = $userData['role'];
+}
+```
+
+### Logout Implementation
+
+```php
+// File: /logout.php
+session_start();
+
+// Clear all session data
+$_SESSION = [];
+
+// Destroy session cookie
+if (isset($_COOKIE[session_name()])) {
+    setcookie(session_name(), '', time() - 3600, '/');
+}
+
+// Destroy session
+session_destroy();
+
+// Redirect to login
+header('Location: /login');
+exit;
+```
+
+### Rate Limiting
+
+Protect against brute-force attacks:
+
+```php
+session_start();
+
+// Track failed login attempts
+if (!isset($_SESSION['login_attempts'])) {
+    $_SESSION['login_attempts'] = 0;
+    $_SESSION['last_attempt'] = time();
+}
+
+// Reset counter after 15 minutes
+if (time() - $_SESSION['last_attempt'] > 900) {
+    $_SESSION['login_attempts'] = 0;
+}
+
+// Block after 5 failed attempts
+if ($_SESSION['login_attempts'] >= 5) {
+    http_response_code(429);
+    echo "Too many failed login attempts. Please try again in 15 minutes.";
+    exit;
+}
+
+// Attempt authentication
+$user = new User();
+$userData = $user->authenticate($username, $password);
+
+if ($userData) {
+    // Success - reset counter
+    $_SESSION['login_attempts'] = 0;
+    // ... proceed with login
+} else {
+    // Failed - increment counter
+    $_SESSION['login_attempts']++;
+    $_SESSION['last_attempt'] = time();
+    echo "Invalid credentials";
+}
+```
+
+### Input Validation
+
+Always validate and sanitize user input:
+
+```php
+$username = trim($_POST['username'] ?? '');
+$password = $_POST['password'] ?? '';
+
+// Validate username format
+if (!preg_match('/^[a-zA-Z0-9_]{3,20}$/', $username)) {
+    echo "Invalid username format";
+    exit;
+}
+
+// Check password length
+if (strlen($password) < 8) {
+    echo "Password too short";
+    exit;
+}
+
+// Proceed with authentication
+$user = new User();
+$userData = $user->authenticate($username, $password);
+```
+
+## Testing Authentication
+
+```php
+// Test authentication function
+function testAuthentication() {
+    $user = new User();
+    
+    // Test 1: Valid credentials
+    $result = $user->authenticate('testuser', 'correct_password');
+    assert($result !== false, 'Valid credentials should return user data');
+    assert(isset($result['id']), 'Result should contain user ID');
+    assert(!isset($result['password']), 'Result should not contain password');
+    
+    // Test 2: Invalid password
+    $result = $user->authenticate('testuser', 'wrong_password');
+    assert($result === false, 'Invalid password should return false');
+    
+    // Test 3: Non-existent user
+    $result = $user->authenticate('nonexistent', 'any_password');
+    assert($result === false, 'Non-existent user should return false');
+    
+    echo "All authentication tests passed!\n";
+}
+```

@@ -1,0 +1,106 @@
+---
+title: Introduction
+description: Welcome to Apartado de Salas - A modern room reservation system built with PHP MVC architecture
+---
+
+## What is Apartado de Salas?
+
+Apartado de Salas is a web-based room reservation system designed for institutional environments. Built with PHP using a custom MVC architecture, it provides a complete solution for managing room bookings, handling approval workflows, and tracking material assignments.
+
+<Info>
+  **Live Demo Available**: Try the system at [arakatadevs.com.mx/Portafolio/Apartado-Salas](https://arakatadevs.com.mx/Portafolio/Apartado-Salas)
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Role-Based Access" icon="user-shield">
+    Separate dashboards and permissions for users and administrators with secure session management
+  </Card>
+  
+  <Card title="Smart Scheduling" icon="calendar-check">
+    Multi-slot reservations with automatic conflict detection and date/time validation
+  </Card>
+  
+  <Card title="Material Management" icon="boxes-stacked">
+    Room-specific material catalogs with quantity tracking and assignment validation
+  </Card>
+  
+  <Card title="Approval Workflow" icon="clipboard-check">
+    Complete request lifecycle from submission to approval/rejection with status tracking
+  </Card>
+</CardGroup>
+
+## How It Works
+
+The system supports two distinct user roles:
+
+### Users (Department Heads)
+- Create room reservation requests
+- Add multiple date/time slots per request
+- Select required materials for each room
+- Track status of submitted requests
+- View personal reservation history
+
+### Administrators
+- Review all pending reservation requests
+- View detailed request information including slots and materials
+- Approve or reject requests
+- Filter requests by status (pending, approved, rejected)
+- Access global reservation dashboard
+
+## Quick Links
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up Apartado de Salas on your server with PHP and MySQL
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Make your first reservation in minutes with demo credentials
+  </Card>
+  
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Learn about the MVC architecture and custom router implementation
+  </Card>
+  
+  <Card title="User Guides" icon="book" href="/guides/creating-reservations">
+    Step-by-step guides for users and administrators
+  </Card>
+</CardGroup>
+
+## Technical Highlights
+
+- **No Framework Dependency**: Pure PHP with custom MVC implementation
+- **Custom Router**: Built-in routing system for GET and POST requests
+- **PDO Database Layer**: Secure database access with prepared statements
+- **Transaction Support**: ACID compliance for multi-step operations
+- **Session Management**: Secure authentication with role-based access control
+- **Conflict Detection**: Automatic validation to prevent double-bookings
+
+## System Requirements
+
+- PHP 7.4 or higher
+- MySQL 5.7+ or MariaDB 10.3+
+- Apache or Nginx web server
+- PDO MySQL extension enabled
+
+<Note>
+  This project was developed during professional internship and refactored as a portfolio piece demonstrating clean architecture principles and modern PHP development practices.
+</Note>
+
+## What's Next?
+
+<Steps>
+  <Step title="Install the System">
+    Follow the [installation guide](/installation) to set up your local or production environment
+  </Step>
+  
+  <Step title="Try the Demo">
+    Use the [quickstart guide](/quickstart) to explore the system with demo credentials
+  </Step>
+  
+  <Step title="Learn the Features">
+    Read about [authentication](/features/authentication) and [reservations](/features/reservations)
+  </Step>
+</Steps>

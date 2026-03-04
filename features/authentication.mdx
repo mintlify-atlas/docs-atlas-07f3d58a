@@ -1,0 +1,368 @@
+---
+title: Authentication
+description: Session-based authentication system with role-based access control for Apartado de Salas
+---
+
+Apartado de Salas implements a secure session-based authentication system with role-based access control (RBAC). The system uses PHP sessions and password hashing to protect user credentials.
+
+## Authentication Flow
+
+The authentication system follows a standard login/logout pattern with session management:
+
+<Steps>
+  <Step title="User submits credentials">
+    User provides username and password through the login form at `/login`.
+  </Step>
+  
+  <Step title="Credentials validation">
+    The system queries the database and verifies the password using `password_verify()`.
+    
+    ```php
+    // From app/models/user.php:14-47
+    public function authenticate(string $username, string $password)
+    {
+        $sql = "SELECT id, username, email, password, role 
+                FROM users WHERE username = :username LIMIT 1";
+        
+        $user = $stmt->fetch();
+        
+        if (!$user || !password_verify($password, $user['password'])) {
+            return false;
+        }
+        
+        unset($user['password']); // Never return password
+        return $user;
+    }
+    ```
+  </Step>
+  
+  <Step title="Session creation">
+    On successful authentication, a session is created with user data stored in `$_SESSION['user']`.
+    
+    ```php
+    // From app/Helpers/Session.php:18-22
+    public static function create(array $userData): void
+    {
+        self::start();
+        $_SESSION['user'] = $userData;
+    }
+    ```
+  </Step>
+  
+  <Step title="Redirect to dashboard">
+    User is redirected to `/dashboard` after successful login.
+  </Step>
+</Steps>
+
+## Session Management
+
+The `Session` helper class provides static methods for managing user sessions throughout the application.
+
+### Core Session Methods
+
+<Accordion title="Session::start()">
+  Initializes a PHP session if one doesn't already exist.
+  
+  ```php
+  // From app/Helpers/Session.php:8-13
+  public static function start(): void
+  {
+      if (session_status() === PHP_SESSION_NONE) {
+          session_start();
+      }
+  }
+  ```
+</Accordion>
+
+<Accordion title="Session::isActive()">
+  Checks if a user session exists.
+  
+  ```php
+  // From app/Helpers/Session.php:27-31
+  public static function isActive(): bool
+  {
+      self::start();
+      return isset($_SESSION['user']);
+  }
+  ```
+</Accordion>
+
+<Accordion title="Session::destroy()">
+  Completely destroys the current session.
+  
+  ```php
+  // From app/Helpers/Session.php:36-41
+  public static function destroy(): void
+  {
+      self::start();
+      session_unset();
+      session_destroy();
+  }
+  ```
+</Accordion>
+
+### Flash Messages
+
+The session system includes support for one-time flash messages:
+
+<Tabs>
+  <Tab title="Set Flash">
+    ```php
+    // From app/Helpers/Session.php:46-50
+    public static function setFlash(string $key, string $message): void
+    {
+        self::start();
+        $_SESSION['flash'][$key] = $message;
+    }
+    ```
+    
+    **Usage:**
+    ```php
+    Session::setFlash('success', 'Reservación creada correctamente.');
+    Session::setFlash('error', 'Datos incompletos.');
+    ```
+  </Tab>
+  
+  <Tab title="Get Flash">
+    ```php
+    // From app/Helpers/Session.php:55-67
+    public static function getFlash(string $key): ?string
+    {
+        self::start();
+        
+        if (!isset($_SESSION['flash'][$key])) {
+            return null;
+        }
+        
+        $message = $_SESSION['flash'][$key];
+        unset($_SESSION['flash'][$key]); // Auto-delete after read
+        
+        return $message;
+    }
+    ```
+    
+    Flash messages are automatically deleted after being read once.
+  </Tab>
+</Tabs>
+
+## Authentication Helpers
+
+The `Auth` class provides convenient methods for authentication checks and access control.
+
+### Checking Authentication Status
+
+```php
+// From app/Helpers/Auth.php:10-13
+public static function check(): bool
+{
+    return Session::isActive();
+}
+```
+
+### Getting Current User
+
+```php
+// From app/Helpers/Auth.php:17-20
+public static function user(): ?array
+{
+    return $_SESSION['user'] ?? null;
+}
+```
+
+**Returns:** Array with user data (id, username, email, role) or `null` if not authenticated.
+
+## Role-Based Access Control
+
+Apartado de Salas implements RBAC with two primary roles: `user` and `admin`.
+
+### Role Verification
+
+<Tabs>
+  <Tab title="Check Role">
+    ```php
+    // From app/Helpers/Auth.php:34-41
+    public static function hasRole(string $role): bool
+    {
+        if (!self::check()) {
+            return false;
+        }
+        
+        return ($_SESSION['user']['role'] ?? null) === $role;
+    }
+    ```
+    
+    **Usage:**
+    ```php
+    if (Auth::hasRole('admin')) {
+        // Show admin features
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Require Role">
+    ```php
+    // From app/Helpers/Auth.php:46-55
+    public static function requireRole(string $role): void
+    {
+        self::requireLogin();
+        
+        if (!self::hasRole($role)) {
+            http_response_code(403);
+            echo '403 - Acceso no autorizado';
+            exit;
+        }
+    }
+    ```
+    
+    **Usage:**
+    ```php
+    // From app/controllers/ReservationController.php:125
+    public function index(): void
+    {
+        Auth::requireRole('admin'); // Only admins can access
+        // ...
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Require Login
+
+Force users to authenticate before accessing a resource:
+
+```php
+// From app/Helpers/Auth.php:24-30
+public static function requireLogin(): void
+{
+    if (!self::check()) {
+        header('Location: ' . BASE_URL . '/login');
+        exit;
+    }
+}
+```
+
+<Info>
+  **Usage Example:** All reservation operations require authentication:
+  
+  ```php
+  // From app/controllers/ReservationController.php:17
+  public function create(): void
+  {
+      Auth::requireLogin();
+      // ...
+  }
+  ```
+</Info>
+
+## Logout Process
+
+The logout process completely destroys the session and regenerates the session ID for security:
+
+```php
+// From app/controllers/AuthController.php:53-70
+public function logout(): void
+{
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    
+    session_unset();        // Clear all session variables
+    session_destroy();       // Destroy the session
+    session_regenerate_id(true); // Regenerate session ID
+    
+    header('Location: ' . BASE_URL . '/login');
+    exit;
+}
+```
+
+<Warning>
+  Always use `session_regenerate_id(true)` after logout to prevent session fixation attacks.
+</Warning>
+
+## Security Best Practices
+
+The authentication system implements several security measures:
+
+<Steps>
+  <Step title="Password Hashing">
+    Passwords are hashed using PHP's `password_hash()` and verified with `password_verify()`.
+    
+    ```php
+    // Never store plain text passwords
+    password_verify($password, $user['password'])
+    ```
+  </Step>
+  
+  <Step title="Password Removal">
+    Password hashes are never included in session data or returned to the client.
+    
+    ```php
+    unset($user['password']); // From user.php:44
+    ```
+  </Step>
+  
+  <Step title="Session Security">
+    Session ID is regenerated on logout to prevent session fixation attacks.
+  </Step>
+  
+  <Step title="Access Control">
+    Role-based checks prevent unauthorized access to admin functions.
+  </Step>
+</Steps>
+
+## Common Authentication Patterns
+
+<Tabs>
+  <Tab title="Public Page">
+    ```php
+    // No authentication required
+    public function showLogin(): void
+    {
+        if (Session::isActive()) {
+            header('Location: ' . BASE_URL . '/dashboard');
+            exit;
+        }
+        // Show login page
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Protected Page">
+    ```php
+    // Requires login
+    public function create(): void
+    {
+        Auth::requireLogin();
+        // Show reservation form
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Admin Only">
+    ```php
+    // Requires admin role
+    public function index(): void
+    {
+        Auth::requireRole('admin');
+        // Show admin dashboard
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## User Data Structure
+
+The authenticated user object stored in `$_SESSION['user']` contains:
+
+```php
+[
+    'id' => 1,
+    'username' => 'john_doe',
+    'email' => 'john@example.com',
+    'role' => 'admin' // or 'user'
+]
+```
+
+<Note>
+  The password hash is **never** included in the session data for security reasons.
+</Note>
