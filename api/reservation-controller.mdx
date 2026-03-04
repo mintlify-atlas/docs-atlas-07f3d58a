@@ -248,7 +248,11 @@ require_once dirname(__DIR__) . '/views/reservations/index.php';
 
 ### getByStatus()
 
-Retrieves reservations filtered by status with joined room and user information.
+<Warning>
+**Deprecated/Unused Method**: This method exists in the controller source code (lines 143-171) but is never called by any route. The `index()` method instead uses the Reservation model's `getByStatus()` method. See [Reservation Model](/api/reservation-model#getbystatus) for the actively used implementation.
+</Warning>
+
+This method retrieves reservations filtered by status with joined room and user information.
 
 <ParamField path="status" type="string" required>
   Status to filter by: `pendiente`, `aprobado`, or `rechazado`
@@ -263,49 +267,10 @@ Retrieves reservations filtered by status with joined room and user information.
 public function getByStatus(string $status): array
 ```
 
-**Implementation:**
+**Note**: In practice, use the Reservation model method via:
 ```php
-$allowed = ['pendiente', 'aprobado', 'rechazado'];
-
-if (!in_array($status, $allowed, true)) {
-    return [];
-}
-
-$sql = "
-    SELECT 
-        r.id,
-        r.event_name,
-        r.status,
-        r.created_at,
-        rm.name AS room_name,
-        u.username
-    FROM reservations r
-    JOIN rooms rm ON rm.id = r.room_id
-    JOIN users u ON u.id = r.user_id
-    WHERE r.status = :status
-    ORDER BY r.created_at DESC
-";
-
-$stmt = $this->db->prepare($sql);
-$stmt->bindParam(':status', $status);
-$stmt->execute();
-
-return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-```
-
-**Return Structure:**
-```php
-[
-    [
-        'id' => 1,
-        'event_name' => 'Team Meeting',
-        'status' => 'pendiente',
-        'created_at' => '2026-03-04 10:00:00',
-        'room_name' => 'Sala A',
-        'username' => 'john_doe'
-    ],
-    // ...
-]
+$reservationModel = new Reservation();
+$reservations = $reservationModel->getByStatus($status);
 ```
 
 ---
